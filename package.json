@@ -1,0 +1,33 @@
+{
+  "name": "ilink-home-assistant",
+  "version": "1.0.0",
+  "description": "Home Assistant integration for iLink Bluetooth lights",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc --watch",
+    "scan": "ts-node src/scan-devices.ts"
+  },
+  "keywords": [
+    "home-assistant",
+    "bluetooth",
+    "ilink",
+    "mqtt",
+    "smart-home"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@abandonware/noble": "^1.9.2-15",
+    "mqtt": "^5.3.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/mqtt": "^5.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

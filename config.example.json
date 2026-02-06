@@ -1,0 +1,24 @@
+{
+  "devices": [
+    {
+      "id": "light1",
+      "name": "Living Room Light",
+      "macAddress": "aa:bb:cc:dd:ee:ff",
+      "targetChar": "a040",
+      "statusChar": "a042"
+    },
+    {
+      "id": "light2",
+      "name": "Bedroom Light",
+      "macAddress": "11:22:33:44:55:66",
+      "targetChar": "a040",
+      "statusChar": "a042"
+    }
+  ],
+  "mqtt": {
+    "brokerUrl": "mqtt://localhost:1883",
+    "username": "",
+    "password": "",
+    "baseTopic": "ilink"
+  }
+}
