@@ -43,11 +43,15 @@ export class ILinkDevice {
         }
       }
 
+      // Add a delay after connection before service discovery (some devices need this)
+      console.log(`[Device] Waiting 2 seconds before service discovery...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       // Discover services and characteristics with timeout
       console.log(`[Device] Discovering services and characteristics for ${this.config.name}...`);
       const discoverPromise = peripheral.discoverAllServicesAndCharacteristicsAsync();
       const discoverTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Service discovery timeout after 15 seconds')), 15000)
+        setTimeout(() => reject(new Error('Service discovery timeout after 30 seconds')), 30000)
       );
       
       let characteristics;
