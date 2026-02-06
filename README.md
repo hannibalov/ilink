@@ -104,17 +104,29 @@ Home Assistant uses these topics to distinguish between devices. Make sure each 
 
 ### Finding Device MAC Addresses
 
-To find your iLink device MAC addresses, you can:
+To find your iLink device MAC addresses:
 
-1. Use the bridge's scan feature (add a scan command)
-2. Use Bluetooth scanning tools:
-   ```bash
-   # Linux
-   sudo hcitool lescan
-   
-   # macOS
-   # Use Bluetooth settings or System Information
-   ```
+**Option 1: Use the built-in scan script (recommended)**
+```bash
+# On Linux/Raspberry Pi, you'll need sudo:
+sudo npm run scan
+
+# Press Ctrl+C when done scanning
+# The script will output a JSON snippet you can copy to your .env file
+```
+
+**Option 2: Use system Bluetooth tools**
+```bash
+# Linux
+sudo hcitool lescan
+
+# Or using bluetoothctl
+bluetoothctl
+scan on
+# Wait for devices, then:
+devices
+exit
+```
 
 ### Device Configuration Fields
 
@@ -207,6 +219,11 @@ yarn start
 ```
 
 **Note:** `npm start` will automatically build if needed, but it's faster to build once with `npm run build` first.
+
+**On Linux/Raspberry Pi:** You'll likely need to run with `sudo` for Bluetooth access:
+```bash
+sudo npm start
+```
 
 ## Home Assistant Configuration
 
@@ -361,12 +378,30 @@ mosquitto_pub -h localhost -t 'ilink/light1/set' -m '{"state":"ON"}'
 
 ### Permission Errors (Linux)
 
+On Linux, Bluetooth Low Energy (BLE) operations typically require root privileges. You have two options:
+
+**Option 1: Run with sudo (simplest)**
+```bash
+sudo npm run scan
+sudo npm start
+```
+
+**Option 2: Set up capabilities (more secure, but complex)**
 ```bash
 # Add user to bluetooth group
 sudo usermod -aG bluetooth $USER
+
+# Set capabilities on node binary (allows BLE without full root)
+sudo setcap cap_net_raw+eip $(eval readlink -f $(which node))
+
 # Log out and back in, or use:
 newgrp bluetooth
+
+# Then try without sudo
+npm run scan
 ```
+
+**Note:** The `noble` library requires elevated privileges on Linux. Running with `sudo` is the simplest solution for development and testing.
 
 ### Device Disconnects Frequently
 

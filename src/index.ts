@@ -19,7 +19,16 @@ interface Config {
 async function loadConfig(): Promise<Config> {
   // Load from environment variables or config file
   const devicesJson = process.env.DEVICES || '[]';
-  const devices: DeviceConfig[] = JSON.parse(devicesJson);
+  let devices: DeviceConfig[] = [];
+  
+  try {
+    devices = JSON.parse(devicesJson);
+  } catch (error) {
+    console.error('[Config] Failed to parse DEVICES JSON:', error);
+    console.error('[Config] DEVICES value:', devicesJson);
+    console.error('[Config] Make sure DEVICES is a valid JSON array on a single line');
+    throw new Error('Invalid DEVICES configuration. Must be a valid JSON array.');
+  }
 
   return {
     devices,

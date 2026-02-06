@@ -1,37 +1,39 @@
 # Home Assistant Configuration Example for iLink Lights
-# Add this to your Home Assistant configuration.yaml or use the MQTT integration UI
+# Add this to your Home Assistant configuration.yaml
 #
 # IMPORTANT: The device "id" in your .env file MUST match the topic names below!
 # Example: If your device has id="living_room", use topics "ilink/living_room/state" and "ilink/living_room/set"
+#
+# NOTE: This uses the NEW MQTT configuration format (not platform: mqtt under light:)
 
-light:
+mqtt:
   # First device - replace "living_room" with your device ID from .env
-  - platform: mqtt
-    name: "Living Room Light"
-    unique_id: "ilink_living_room"
-    state_topic: "ilink/living_room/state"
-    command_topic: "ilink/living_room/set"
-    brightness: true
-    rgb: true
-    color_temp: true
-    schema: json
-    optimistic: false
-    qos: 1
-    retain: true
+  - light:
+      name: "Living Room Light"
+      unique_id: "ilink_living_room"
+      state_topic: "ilink/living_room/state"
+      command_topic: "ilink/living_room/set"
+      schema: json
+      brightness: true
+      rgb: true
+      color_temp: true
+      optimistic: false
+      qos: 1
+      retain: true
 
   # Second device - replace "bedroom" with your device ID from .env
-  - platform: mqtt
-    name: "Bedroom Light"
-    unique_id: "ilink_bedroom"
-    state_topic: "ilink/bedroom/state"
-    command_topic: "ilink/bedroom/set"
-    brightness: true
-    rgb: true
-    color_temp: true
-    schema: json
-    optimistic: false
-    qos: 1
-    retain: true
+  - light:
+      name: "Bedroom Light"
+      unique_id: "ilink_bedroom"
+      state_topic: "ilink/bedroom/state"
+      command_topic: "ilink/bedroom/set"
+      schema: json
+      brightness: true
+      rgb: true
+      color_temp: true
+      optimistic: false
+      qos: 1
+      retain: true
 
 # To add more devices, copy one of the entries above and:
 # 1. Change the "name" to something descriptive
