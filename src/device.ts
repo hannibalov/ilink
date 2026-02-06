@@ -21,9 +21,11 @@ export class ILinkDevice {
     try {
       this.peripheral = peripheral;
       
+      console.log(`[Device] Attempting to connect to ${this.config.name}...`);
+      
       // Connect to peripheral
       await peripheral.connectAsync();
-      console.log(`[Device] Connected to ${this.config.name} (${this.config.id})`);
+      console.log(`[Device] Bluetooth connection established for ${this.config.name}`);
 
       // Discover services and characteristics
       const { characteristics } = await peripheral.discoverAllServicesAndCharacteristicsAsync();
@@ -40,8 +42,11 @@ export class ILinkDevice {
       if (!char) {
         console.error(`[Device] Characteristic ${targetCharUuid} not found for ${this.config.name}`);
         console.log(`[Device] Available characteristics:`, characteristics.map(c => c.uuid));
+        await this.peripheral!.disconnectAsync();
         return false;
       }
+
+      console.log(`[Device] Found characteristic ${targetCharUuid} for ${this.config.name}`);
 
       this.characteristic = char;
       this.reconnectAttempts = 0;
@@ -55,11 +60,25 @@ export class ILinkDevice {
       });
 
       // Try to read initial state
+      console.log(`[Device] Reading initial state for ${this.config.name}...`);
       await this.readState();
 
+      console.log(`[Device] Successfully connected to ${this.config.name} (${this.config.id})`);
       return true;
     } catch (error) {
       console.error(`[Device] Failed to connect to ${this.config.name}:`, error);
+      if (error instanceof Error) {
+        console.error(`[Device] Error details: ${error.message}`);
+        console.error(`[Device] Stack: ${error.stack}`);
+      }
+      // Try to disconnect if connection was partially established
+      try {
+        if (this.peripheral) {
+          await this.peripheral.disconnectAsync();
+        }
+      } catch (disconnectError) {
+        // Ignore disconnect errors
+      }
       return false;
     }
   }

@@ -75,9 +75,11 @@ export class BLEManager {
     });
 
     if (!peripheral) {
-      console.error(`[BLE] Device ${config.macAddress} not found`);
+      console.error(`[BLE] Device ${config.macAddress} not found in scan results`);
       return null;
     }
+
+    console.log(`[BLE] Found peripheral for ${config.name}, attempting connection...`);
 
     // Create device instance
     const device = new ILinkDevice(config, (state) => {
@@ -87,12 +89,14 @@ export class BLEManager {
     // Connect
     const connected = await device.connect(peripheral);
     if (connected) {
+      console.log(`[BLE] Successfully connected and registered ${config.name} (${config.id})`);
       this.devices.set(config.id, device);
       this.peripherals.set(config.id, peripheral);
       return device;
+    } else {
+      console.error(`[BLE] Failed to connect to ${config.name} - connection returned false`);
+      return null;
     }
-
-    return null;
   }
 
   async disconnectDevice(deviceId: string): Promise<void> {
