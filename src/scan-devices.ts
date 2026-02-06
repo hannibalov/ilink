@@ -75,7 +75,7 @@ async function scanForDevices() {
       process.exit(0);
     });
 
-    if (noble.state === 'poweredOn') {
+    if (noble._state === 'poweredOn') {
       noble.startScanning([], true);
     }
   });

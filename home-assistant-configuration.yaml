@@ -1,15 +1,16 @@
 # Home Assistant Configuration Example for iLink Lights
 # Add this to your Home Assistant configuration.yaml or use the MQTT integration UI
-
-# Example MQTT Light configuration for a single iLink device
-# Replace 'light1' with your device ID and adjust the topic prefix if needed
+#
+# IMPORTANT: The device "id" in your .env file MUST match the topic names below!
+# Example: If your device has id="living_room", use topics "ilink/living_room/state" and "ilink/living_room/set"
 
 light:
+  # First device - replace "living_room" with your device ID from .env
   - platform: mqtt
     name: "Living Room Light"
-    unique_id: "ilink_light1"
-    state_topic: "ilink/light1/state"
-    command_topic: "ilink/light1/set"
+    unique_id: "ilink_living_room"
+    state_topic: "ilink/living_room/state"
+    command_topic: "ilink/living_room/set"
     brightness: true
     rgb: true
     color_temp: true
@@ -18,19 +19,25 @@ light:
     qos: 1
     retain: true
 
-# If you have multiple devices, add multiple entries:
-#  - platform: mqtt
-#     name: "Bedroom Light"
-#     unique_id: "ilink_light2"
-#     state_topic: "ilink/light2/state"
-#     command_topic: "ilink/light2/set"
-#     brightness: true
-#     rgb: true
-#     color_temp: true
-#     schema: json
-#     optimistic: false
-#     qos: 1
-#     retain: true
+  # Second device - replace "bedroom" with your device ID from .env
+  - platform: mqtt
+    name: "Bedroom Light"
+    unique_id: "ilink_bedroom"
+    state_topic: "ilink/bedroom/state"
+    command_topic: "ilink/bedroom/set"
+    brightness: true
+    rgb: true
+    color_temp: true
+    schema: json
+    optimistic: false
+    qos: 1
+    retain: true
+
+# To add more devices, copy one of the entries above and:
+# 1. Change the "name" to something descriptive
+# 2. Change the "unique_id" to be unique (e.g., "ilink_kitchen")
+# 3. Change the topic names to match your device ID (e.g., "ilink/kitchen/state")
+# 4. Make sure the device ID in your .env file matches the topic name!
 
 # Alternative: Use MQTT Discovery (if supported)
 # The bridge can be extended to support Home Assistant MQTT Discovery protocol

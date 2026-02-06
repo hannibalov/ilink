@@ -77,16 +77,30 @@ MQTT_PASSWORD=  # Optional
 MQTT_BASE_TOPIC=ilink
 
 # Device Configuration (JSON array)
+# Each device needs a unique "id" - this is used in MQTT topics
 DEVICES=[
   {
-    "id": "light1",
+    "id": "living_room",
     "name": "Living Room Light",
     "macAddress": "aa:bb:cc:dd:ee:ff",
+    "targetChar": "a040",
+    "statusChar": "a042"
+  },
+  {
+    "id": "bedroom",
+    "name": "Bedroom Light",
+    "macAddress": "11:22:33:44:55:66",
     "targetChar": "a040",
     "statusChar": "a042"
   }
 ]
 ```
+
+**Important:** Each device must have a **unique `id`**. This `id` is used to create MQTT topics:
+- Command topic: `ilink/{id}/set`
+- State topic: `ilink/{id}/state`
+
+Home Assistant uses these topics to distinguish between devices. Make sure each device has a different `id`!
 
 ### Finding Device MAC Addresses
 
@@ -104,15 +118,77 @@ To find your iLink device MAC addresses, you can:
 
 ### Device Configuration Fields
 
-- `id`: Unique identifier for the device (used in MQTT topics)
-- `name`: Friendly name (for logging)
-- `macAddress`: Bluetooth MAC address of the device
+- `id`: **Unique identifier for the device** (used in MQTT topics) - **Must be unique for each device!**
+  - Examples: `"living_room"`, `"bedroom"`, `"kitchen_light"`
+  - Used in MQTT topics: `ilink/{id}/set` and `ilink/{id}/state`
+  - Home Assistant uses this to distinguish between devices
+- `name`: Friendly name (for logging and display)
+- `macAddress`: Bluetooth MAC address of the device (must be unique per physical device)
 - `targetChar`: Characteristic UUID for writing commands (default: `a040`)
 - `statusChar`: Characteristic UUID for reading status (default: `a042`)
 
+### Multiple Devices
+
+When you have multiple iLink devices, each one needs:
+1. **Unique `id`** - This is how Home Assistant distinguishes them
+2. **Unique `macAddress`** - The physical Bluetooth address
+3. **Corresponding Home Assistant configuration** - One light entity per device
+
+Example with 2 devices:
+
+**.env file:**
+```env
+DEVICES=[
+  {"id":"living_room","name":"Living Room","macAddress":"aa:bb:cc:dd:ee:ff"},
+  {"id":"bedroom","name":"Bedroom","macAddress":"11:22:33:44:55:66"}
+]
+```
+
+**Home Assistant configuration.yaml:**
+```yaml
+light:
+  - platform: mqtt
+    name: "Living Room Light"
+    unique_id: "ilink_living_room"
+    state_topic: "ilink/living_room/state"
+    command_topic: "ilink/living_room/set"
+    brightness: true
+    rgb: true
+    schema: json
+    optimistic: false
+    qos: 1
+    retain: true
+
+  - platform: mqtt
+    name: "Bedroom Light"
+    unique_id: "ilink_bedroom"
+    state_topic: "ilink/bedroom/state"
+    command_topic: "ilink/bedroom/set"
+    brightness: true
+    rgb: true
+    schema: json
+    optimistic: false
+    qos: 1
+    retain: true
+```
+
+Notice how the `id` in the `.env` file matches the topic names in Home Assistant!
+
 ## Running
 
+### First Time Setup
+
+After installing dependencies, build the TypeScript code:
+
+```bash
+npm run build
+# or
+yarn build
+```
+
 ### Development Mode
+
+Runs TypeScript directly without building (good for development):
 
 ```bash
 npm run dev
@@ -122,11 +198,15 @@ yarn dev
 
 ### Production Mode
 
+Builds and runs the compiled JavaScript:
+
 ```bash
 npm start
 # or
 yarn start
 ```
+
+**Note:** `npm start` will automatically build if needed, but it's faster to build once with `npm run build` first.
 
 ## Home Assistant Configuration
 

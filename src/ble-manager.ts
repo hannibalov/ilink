@@ -25,7 +25,7 @@ export class BLEManager {
         }
       });
 
-      if (noble.state === 'poweredOn') {
+      if (noble._state === 'poweredOn') {
         resolve();
       }
     });
