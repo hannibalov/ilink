@@ -43,10 +43,22 @@ export class ILinkDevice {
         }
       }
 
-      // Discover services and characteristics
+      // Discover services and characteristics with timeout
       console.log(`[Device] Discovering services and characteristics for ${this.config.name}...`);
-      const { characteristics } = await peripheral.discoverAllServicesAndCharacteristicsAsync();
-      console.log(`[Device] Found ${characteristics.length} characteristics for ${this.config.name}`);
+      const discoverPromise = peripheral.discoverAllServicesAndCharacteristicsAsync();
+      const discoverTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Service discovery timeout after 15 seconds')), 15000)
+      );
+      
+      let characteristics;
+      try {
+        const result = await Promise.race([discoverPromise, discoverTimeout]);
+        characteristics = result.characteristics;
+        console.log(`[Device] Found ${characteristics.length} characteristics for ${this.config.name}`);
+      } catch (discoverError) {
+        console.error(`[Device] Service discovery failed for ${this.config.name}:`, discoverError);
+        throw discoverError;
+      }
       
       // Find the target characteristic (default: a040)
       const targetCharUuid = this.config.targetChar || 'a040';
