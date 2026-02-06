@@ -23,17 +23,36 @@ export class ILinkDevice {
       
       console.log(`[Device] Attempting to connect to ${this.config.name}...`);
       
-      // Connect to peripheral
-      await peripheral.connectAsync();
-      console.log(`[Device] Bluetooth connection established for ${this.config.name}`);
+      // Check if already connected
+      if (peripheral.state === 'connected') {
+        console.log(`[Device] ${this.config.name} is already connected`);
+      } else {
+        // Connect to peripheral with timeout
+        console.log(`[Device] Current peripheral state: ${peripheral.state}`);
+        const connectPromise = peripheral.connectAsync();
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Connection timeout after 15 seconds')), 15000)
+        );
+        
+        try {
+          await Promise.race([connectPromise, timeoutPromise]);
+          console.log(`[Device] Bluetooth connection established for ${this.config.name}`);
+        } catch (timeoutError) {
+          console.error(`[Device] Connection timeout for ${this.config.name}`);
+          throw timeoutError;
+        }
+      }
 
       // Discover services and characteristics
+      console.log(`[Device] Discovering services and characteristics for ${this.config.name}...`);
       const { characteristics } = await peripheral.discoverAllServicesAndCharacteristicsAsync();
+      console.log(`[Device] Found ${characteristics.length} characteristics for ${this.config.name}`);
       
       // Find the target characteristic (default: a040)
       const targetCharUuid = this.config.targetChar || 'a040';
       const normalizedTargetChar = targetCharUuid.toLowerCase().replace(/-/g, '');
       
+      console.log(`[Device] Looking for characteristic ${targetCharUuid} (normalized: ${normalizedTargetChar})`);
       const char = characteristics.find(c => {
         const uuid = c.uuid.toLowerCase().replace(/-/g, '');
         return uuid === normalizedTargetChar || uuid === targetCharUuid;
@@ -61,7 +80,13 @@ export class ILinkDevice {
 
       // Try to read initial state
       console.log(`[Device] Reading initial state for ${this.config.name}...`);
-      await this.readState();
+      try {
+        await this.readState();
+        console.log(`[Device] Initial state read completed for ${this.config.name}`);
+      } catch (readError) {
+        console.warn(`[Device] Failed to read initial state for ${this.config.name}, but continuing:`, readError);
+        // Don't fail the connection if state read fails
+      }
 
       console.log(`[Device] Successfully connected to ${this.config.name} (${this.config.id})`);
       return true;
