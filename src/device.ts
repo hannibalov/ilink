@@ -47,16 +47,44 @@ export class ILinkDevice {
         }
       }
 
-      // Add a longer delay after connection before service discovery (some devices need more time)
-      console.log(`[Device] Waiting 3 seconds before service discovery...`);
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Set up disconnect handler immediately to catch early disconnections
+      let disconnected = false;
+      const disconnectHandler = () => {
+        console.warn(`[Device] ${this.config.name} disconnected unexpectedly`);
+        disconnected = true;
+      };
+      this.peripheral.once('disconnect', disconnectHandler);
 
-      // Verify peripheral is still connected before discovery
+      // Add a minimal delay after connection before service discovery
+      // Some devices need a brief moment to stabilize, but we want to start discovery ASAP
+      console.log(`[Device] Waiting briefly before service discovery...`);
+      const waitStartTime = Date.now();
+      const maxWaitTime = 1000; // Reduced to 1 second
+      const checkInterval = 100; // Check every 100ms
+      
+      while (Date.now() - waitStartTime < maxWaitTime) {
+        await new Promise(resolve => setTimeout(resolve, checkInterval));
+        
+        // Check if disconnected
+        if (disconnected || !this.peripheral || this.peripheral.state !== 'connected') {
+          this.peripheral?.removeListener('disconnect', disconnectHandler);
+          console.error(`[Device] Peripheral disconnected during wait period for ${this.config.name}`);
+          console.error(`[Device] Peripheral state: ${this.peripheral?.state || 'null'}, disconnected flag: ${disconnected}`);
+          throw new Error('Peripheral disconnected before service discovery');
+        }
+      }
+
+      // Remove disconnect handler and set up proper one later
+      this.peripheral.removeListener('disconnect', disconnectHandler);
+
+      // Final check before proceeding
       if (!this.peripheral || this.peripheral.state !== 'connected') {
         console.error(`[Device] Peripheral lost connection before service discovery for ${this.config.name}`);
         console.error(`[Device] Peripheral state: ${this.peripheral?.state || 'null'}`);
         throw new Error('Peripheral disconnected before service discovery');
       }
+      
+      console.log(`[Device] Connection stable, proceeding with service discovery...`);
 
       // Discover services and characteristics with timeout
       // Some devices need a longer timeout, especially on Linux/Raspberry Pi

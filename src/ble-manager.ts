@@ -7,7 +7,7 @@ export class BLEManager {
   private peripherals = new Map<string, Peripheral>();
   private isScanning = false;
 
-  constructor(private onDeviceStateUpdate: (deviceId: string, state: any) => void) {}
+  constructor(private onDeviceStateUpdate: (deviceId: string, state: any) => void) { }
 
   async initialize(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -47,7 +47,7 @@ export class BLEManager {
           const name = peripheral.advertisement.localName || 'Unknown';
           const address = peripheral.address || 'N/A';
           const serviceUuids = peripheral.advertisement.serviceUuids || [];
-          const hasILinkService = serviceUuids.some((uuid: string) => 
+          const hasILinkService = serviceUuids.some((uuid: string) =>
             uuid.toLowerCase().replace(/-/g, '').includes('a032')
           );
           const iLinkIndicator = hasILinkService ? ' [iLink?]' : '';
@@ -79,7 +79,7 @@ export class BLEManager {
 
     // First, try to find the device by scanning
     console.log(`[BLE] Looking for device ${config.name} (${config.macAddress})`);
-    
+
     // Increase scan duration to give devices more time to advertise
     const peripherals = await this.scanForDevices(8000);
     let peripheral: Peripheral | undefined;
@@ -88,9 +88,9 @@ export class BLEManager {
     // On macOS, peripheral.address is often N/A due to privacy, so we fall back to name matching
     const normalizeMac = (mac: string) => mac.toLowerCase().replace(/[:-]/g, '');
     const targetMac = normalizeMac(config.macAddress);
-    
+
     console.log(`[BLE] Target MAC (normalized): ${targetMac}`);
-    
+
     peripheral = peripherals.find(p => {
       // Try address first (actual MAC address - works on Linux)
       if (p.address && p.address !== 'N/A') {
@@ -100,7 +100,7 @@ export class BLEManager {
           return true;
         }
       }
-      
+
       // Fallback: try id (might be MAC on some platforms)
       // Device IDs are often the MAC address without colons
       if (p.id) {
@@ -115,26 +115,26 @@ export class BLEManager {
           return true;
         }
       }
-      
+
       return false;
     });
 
     // If MAC address matching failed (common on macOS), try matching by device name
     if (!peripheral) {
       console.log(`[BLE] MAC address matching failed, trying to match by device name: "${config.name}"`);
-      
+
       // First, prioritize devices named "ilink app" (common name for iLink lights)
       const iLinkAppDevices = peripherals.filter(p => {
         const localName = (p.advertisement.localName || '').toLowerCase();
         return localName === 'ilink app' || localName.includes('ilink');
       });
-      
+
       if (iLinkAppDevices.length > 0) {
         console.log(`[BLE] Found ${iLinkAppDevices.length} device(s) named "ilink app"`);
         // For now, we'll need device IDs in config to distinguish them
         // But let's try matching by checking if we can connect and verify characteristics
       }
-      
+
       // Try exact name match (must have a non-empty name)
       peripheral = peripherals.find(p => {
         const localName = p.advertisement.localName || '';
@@ -148,8 +148,8 @@ export class BLEManager {
         }
         // Try partial match only if both names are substantial
         if (localName.length > 3 && config.name.length > 3) {
-          if (localName.toLowerCase().includes(config.name.toLowerCase()) || 
-              config.name.toLowerCase().includes(localName.toLowerCase())) {
+          if (localName.toLowerCase().includes(config.name.toLowerCase()) ||
+            config.name.toLowerCase().includes(localName.toLowerCase())) {
             console.log(`[BLE] Matched by partial name: "${localName}" contains "${config.name}"`);
             return true;
           }
@@ -175,11 +175,11 @@ export class BLEManager {
       console.log(`[BLE] All matching methods failed. Looking for iLink devices by service UUID...`);
       const iLinkDevices = peripherals.filter(p => {
         const serviceUuids = p.advertisement.serviceUuids || [];
-        return serviceUuids.some((uuid: string) => 
+        return serviceUuids.some((uuid: string) =>
           uuid.toLowerCase().replace(/-/g, '').includes('a032')
         );
       });
-      
+
       if (iLinkDevices.length > 0) {
         console.log(`[BLE] Found ${iLinkDevices.length} potential iLink device(s) by service UUID`);
         console.log(`[BLE] iLink devices found:`);
@@ -188,7 +188,7 @@ export class BLEManager {
           const address = p.address || 'N/A';
           console.log(`[BLE]   ${idx + 1}. ${name} (ID: ${p.id}, Address: ${address})`);
         });
-        
+
         // If we only found one iLink device and it matches the expected pattern, try it
         // This helps when devices don't advertise their names properly
         if (iLinkDevices.length === 1) {
@@ -221,7 +221,7 @@ export class BLEManager {
         const normalizedAddress = address !== 'N/A' ? normalizeMac(address) : 'N/A';
         const normalizedId = normalizeMac(p.id);
         const serviceUuids = p.advertisement.serviceUuids || [];
-        const hasILinkService = serviceUuids.some((uuid: string) => 
+        const hasILinkService = serviceUuids.some((uuid: string) =>
           uuid.toLowerCase().replace(/-/g, '').includes('a032')
         );
         const iLinkIndicator = hasILinkService ? ' [iLink?]' : '';
