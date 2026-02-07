@@ -128,9 +128,9 @@ export class ILinkDevice {
           // CRITICAL: Start discovery immediately - no delays!
           // The device will disconnect (error 62) if it doesn't receive GATT requests quickly
           
-          // Discover ONLY the specific iLink service (a032) instead of all services
-          // This is much faster and prevents timeout (error 62) by keeping communication active
-          // We know the service UUID, so we don't need to discover everything
+          // Discover ONLY the specific iLink service (a032) with a SHORT timeout
+          // Use a very short timeout to fail fast and retry if needed
+          // This prevents the device from timing out (error 62)
           const services = await new Promise<any[]>((resolve, reject) => {
             // Check connection state before starting discovery
             if (!this.peripheral || this.peripheral.state !== 'connected') {
@@ -138,34 +138,24 @@ export class ILinkDevice {
               return;
             }
             
-            // Set up a periodic connection check during discovery
-            // This helps catch disconnections early (error 62)
-            const connectionCheckInterval = setInterval(() => {
-              if (!this.peripheral || this.peripheral.state !== 'connected') {
-                clearInterval(connectionCheckInterval);
-                clearTimeout(timeout);
-                reject(new Error('Peripheral disconnected during service discovery (periodic check)'));
-              }
-            }, 1000); // Check every second
+            // Use a shorter timeout - if it takes longer, we'll retry
+            const shortTimeout = 3000; // 3 seconds - if it takes longer, retry
             
             const timeout = setTimeout(() => {
-              clearInterval(connectionCheckInterval);
               // Check if still connected when timeout occurs
               if (!this.peripheral || this.peripheral.state !== 'connected') {
                 reject(new Error('Peripheral disconnected during service discovery timeout'));
               } else {
-                reject(new Error(`Service discovery timeout after ${discoveryTimeout / 1000} seconds`));
+                reject(new Error(`Service discovery timeout after ${shortTimeout / 1000} seconds`));
               }
-            }, discoveryTimeout);
+            }, shortTimeout);
             
             // Discover ONLY the iLink service UUID (a032) - much faster than discovering all services
-            // This keeps the connection alive and prevents error 62 timeout
             try {
               // Normalize the service UUID (remove dashes, ensure lowercase)
               const normalizedServiceUuid = iLinkServiceUuid.toLowerCase().replace(/-/g, '');
               
               this.peripheral!.discoverServices([normalizedServiceUuid], (error: string | null, discoveredServices: any[]) => {
-                clearInterval(connectionCheckInterval);
                 clearTimeout(timeout);
                 // Check connection state in callback
                 if (!this.peripheral || this.peripheral.state !== 'connected') {
@@ -189,7 +179,6 @@ export class ILinkDevice {
                 }
               });
             } catch (err) {
-              clearInterval(connectionCheckInterval);
               clearTimeout(timeout);
               reject(new Error(`Failed to start service discovery: ${err instanceof Error ? err.message : String(err)}`));
             }
@@ -197,7 +186,7 @@ export class ILinkDevice {
           
           console.log(`[Device] Found ${services.length} service(s), discovering characteristics...`);
           
-          // Discover characteristics for all services (we'll filter later)
+          // Discover characteristics for the service - also with short timeout
           const allCharacteristics: Characteristic[] = [];
           
           // Check connection before discovering characteristics
@@ -213,19 +202,18 @@ export class ILinkDevice {
               }
               
               const serviceChars = await new Promise<Characteristic[]>((resolve, reject) => {
+                const shortCharTimeout = 3000; // 3 seconds for characteristics too
                 const timeout = setTimeout(() => {
-                  // Check connection state when timeout occurs
                   if (!this.peripheral || this.peripheral.state !== 'connected') {
                     reject(new Error('Peripheral disconnected during characteristic discovery timeout'));
                   } else {
                     reject(new Error(`Characteristic discovery timeout for service ${service.uuid}`));
                   }
-                }, discoveryTimeout);
+                }, shortCharTimeout);
                 
                 try {
                   service.discoverCharacteristics([], (error: string | null, chars: Characteristic[]) => {
                     clearTimeout(timeout);
-                    // Check connection state in callback
                     if (!this.peripheral || this.peripheral.state !== 'connected') {
                       reject(new Error('Peripheral disconnected during characteristic discovery'));
                       return;
@@ -245,12 +233,13 @@ export class ILinkDevice {
               allCharacteristics.push(...serviceChars);
             } catch (charError) {
               console.warn(`[Device] Failed to discover characteristics for service ${service.uuid}:`, charError instanceof Error ? charError.message : String(charError));
-              // Continue with other services, but check if we should abort
               if (charError instanceof Error && charError.message.includes('disconnected')) {
                 throw charError; // Re-throw disconnection errors
               }
             }
           }
+          
+          console.log(`[Device] Found ${allCharacteristics.length} characteristic(s)`);
           
           // Filter for the characteristics we need (a040 and a042)
           const normalizedTargetChar = targetCharUuid.toLowerCase().replace(/-/g, '');
