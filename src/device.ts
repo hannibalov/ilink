@@ -70,17 +70,12 @@ export class ILinkDevice {
         try {
           if (attempt > 1) {
             console.log(`[Device] Retry attempt ${attempt}/${maxRetries} for service discovery...`);
-            // Verify still connected before retry
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Verify still connected - if not, we need a fresh peripheral reference
             if (!this.peripheral || this.peripheral.state !== 'connected') {
-              // Try to reconnect
-              try {
-                await this.peripheral.connectAsync();
-                await new Promise(resolve => setTimeout(resolve, 1000));
-              } catch (reconnectError) {
-                throw new Error(`Reconnection failed: ${reconnectError instanceof Error ? reconnectError.message : String(reconnectError)}`);
-              }
-            } else {
-              await new Promise(resolve => setTimeout(resolve, 1000));
+              throw new Error('Peripheral disconnected - need fresh reference');
             }
           }
           
@@ -89,8 +84,8 @@ export class ILinkDevice {
             throw new Error('Peripheral not connected before discovery');
           }
           
-          // Use discoverAllServicesAndCharacteristicsAsync with timeout
-          // This is the standard approach used by many working projects
+          // On Linux, service discovery can hang. Use a shorter timeout and let it fail fast
+          // Then retry - this seems to work better than one long timeout
           const discoverPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
           const discoverTimeoutPromise = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Service discovery timeout after ${discoveryTimeout / 1000} seconds (attempt ${attempt}/${maxRetries})`)), discoveryTimeout)
@@ -127,6 +122,8 @@ export class ILinkDevice {
             if (attempt === maxRetries) {
               throw new Error(`Peripheral disconnected during service discovery: ${lastError.message}`);
             }
+            // For retries, we'll need a fresh peripheral reference - throw to let caller handle
+            throw new Error('Peripheral disconnected - need fresh reference');
           }
           
           // If this was the last attempt, provide helpful error message
