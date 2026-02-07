@@ -76,11 +76,21 @@ async function main() {
     await bleManager.initialize();
     console.log('[Main] BLE manager initialized');
 
-    // Connect to all configured devices
+    // Connect to all configured devices sequentially with delays
+    // This prevents overwhelming the Bluetooth stack on Raspberry Pi
     const connectedDevices: ILinkDevice[] = [];
 
-    for (const deviceConfig of config.devices) {
-      console.log(`[Main] Connecting to ${deviceConfig.name}...`);
+    for (let i = 0; i < config.devices.length; i++) {
+      const deviceConfig = config.devices[i];
+      console.log(`[Main] Connecting to ${deviceConfig.name} (${i + 1}/${config.devices.length})...`);
+      
+      // Add a delay before connecting (except for the first device)
+      // This gives the Bluetooth stack time to stabilize between connections
+      if (i > 0) {
+        console.log(`[Main] Waiting 2 seconds before connecting next device...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
       const device = await bleManager.connectDevice(deviceConfig);
       
       if (device) {
@@ -91,8 +101,13 @@ async function main() {
         // Publish initial state
         const initialState = device.getState();
         mqttBridge.publishState(deviceConfig.id, initialState);
+        
+        // Add a small delay after successful connection to let it stabilize
+        await new Promise(resolve => setTimeout(resolve, 1000));
       } else {
         console.error(`[Main] Failed to connect to ${deviceConfig.name}`);
+        // Still wait a bit even on failure to avoid rapid retries
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
