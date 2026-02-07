@@ -34,6 +34,10 @@ export class ILinkDevice {
         await Promise.race([connectPromise, timeoutPromise]);
       }
 
+      // On Raspberry Pi/Linux, add a stabilization delay after connection
+      // This helps prevent premature disconnections during service discovery
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
       // Set up disconnect handler immediately to catch early disconnections
       let disconnected = false;
       const disconnectHandler = () => {
@@ -60,18 +64,20 @@ export class ILinkDevice {
       console.log(`[Device] Discovering services and characteristics for ${this.config.name}...`);
       
       let characteristics: Characteristic[] = [];
-      const maxRetries = 3;
+      const maxRetries = 5; // Increased retries for Raspberry Pi
       let lastError: Error | null = null;
       
       // Timeout for service discovery on Linux - discovering all services can take time
-      const discoveryTimeout = 20000; // 20 seconds for full service discovery on Linux
+      // Increased timeout for Raspberry Pi which can be slower
+      const discoveryTimeout = 30000; // 30 seconds for full service discovery on Linux/Raspberry Pi
       
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           if (attempt > 1) {
             console.log(`[Device] Retry attempt ${attempt}/${maxRetries} for service discovery...`);
-            // Wait before retry
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // Wait before retry - longer delay for later attempts
+            const retryDelay = Math.min(1000 * attempt, 3000);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
             
             // Verify still connected - if not, we need a fresh peripheral reference
             if (!this.peripheral || this.peripheral.state !== 'connected') {
@@ -84,24 +90,48 @@ export class ILinkDevice {
             throw new Error('Peripheral not connected before discovery');
           }
           
+          // Add a small delay before starting discovery to ensure connection is stable
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
           // On Linux, discoverAllServicesAndCharacteristicsAsync() hangs indefinitely
           // Use the callback-based two-step approach from peripheral-explorer.js:
           // 1. Discover services first (callback-based, more reliable on Linux)
           // 2. Then discover characteristics for each service
           const services = await new Promise<any[]>((resolve, reject) => {
+            // Check connection state before starting discovery
+            if (!this.peripheral || this.peripheral.state !== 'connected') {
+              reject(new Error('Peripheral disconnected before service discovery'));
+              return;
+            }
+            
             const timeout = setTimeout(() => {
-              reject(new Error(`Service discovery timeout after ${discoveryTimeout / 1000} seconds`));
+              // Check if still connected when timeout occurs
+              if (!this.peripheral || this.peripheral.state !== 'connected') {
+                reject(new Error('Peripheral disconnected during service discovery timeout'));
+              } else {
+                reject(new Error(`Service discovery timeout after ${discoveryTimeout / 1000} seconds`));
+              }
             }, discoveryTimeout);
             
             // Use callback-based discoverServices - more reliable on Linux
-            this.peripheral!.discoverServices([], (error: string | null, discoveredServices: any[]) => {
+            try {
+              this.peripheral!.discoverServices([], (error: string | null, discoveredServices: any[]) => {
+                clearTimeout(timeout);
+                // Check connection state in callback
+                if (!this.peripheral || this.peripheral.state !== 'connected') {
+                  reject(new Error('Peripheral disconnected during service discovery'));
+                  return;
+                }
+                if (error) {
+                  reject(new Error(`Service discovery failed: ${error}`));
+                } else {
+                  resolve(discoveredServices || []);
+                }
+              });
+            } catch (err) {
               clearTimeout(timeout);
-              if (error) {
-                reject(new Error(`Service discovery failed: ${error}`));
-              } else {
-                resolve(discoveredServices || []);
-              }
-            });
+              reject(new Error(`Failed to start service discovery: ${err instanceof Error ? err.message : String(err)}`));
+            }
           });
           
           console.log(`[Device] Found ${services.length} service(s), discovering characteristics...`);
@@ -109,27 +139,55 @@ export class ILinkDevice {
           // Discover characteristics for all services (we'll filter later)
           const allCharacteristics: Characteristic[] = [];
           
+          // Check connection before discovering characteristics
+          if (!this.peripheral || this.peripheral.state !== 'connected') {
+            throw new Error('Peripheral disconnected before characteristic discovery');
+          }
+          
           for (const service of services) {
             try {
+              // Check connection before each service
+              if (!this.peripheral || this.peripheral.state !== 'connected') {
+                throw new Error('Peripheral disconnected during characteristic discovery');
+              }
+              
               const serviceChars = await new Promise<Characteristic[]>((resolve, reject) => {
                 const timeout = setTimeout(() => {
-                  reject(new Error(`Characteristic discovery timeout for service ${service.uuid}`));
+                  // Check connection state when timeout occurs
+                  if (!this.peripheral || this.peripheral.state !== 'connected') {
+                    reject(new Error('Peripheral disconnected during characteristic discovery timeout'));
+                  } else {
+                    reject(new Error(`Characteristic discovery timeout for service ${service.uuid}`));
+                  }
                 }, discoveryTimeout);
                 
-                service.discoverCharacteristics([], (error: string | null, chars: Characteristic[]) => {
+                try {
+                  service.discoverCharacteristics([], (error: string | null, chars: Characteristic[]) => {
+                    clearTimeout(timeout);
+                    // Check connection state in callback
+                    if (!this.peripheral || this.peripheral.state !== 'connected') {
+                      reject(new Error('Peripheral disconnected during characteristic discovery'));
+                      return;
+                    }
+                    if (error) {
+                      reject(new Error(`Characteristic discovery failed: ${error}`));
+                    } else {
+                      resolve(chars || []);
+                    }
+                  });
+                } catch (err) {
                   clearTimeout(timeout);
-                  if (error) {
-                    reject(new Error(`Characteristic discovery failed: ${error}`));
-                  } else {
-                    resolve(chars || []);
-                  }
-                });
+                  reject(new Error(`Failed to start characteristic discovery: ${err instanceof Error ? err.message : String(err)}`));
+                }
               });
               
               allCharacteristics.push(...serviceChars);
             } catch (charError) {
               console.warn(`[Device] Failed to discover characteristics for service ${service.uuid}:`, charError instanceof Error ? charError.message : String(charError));
-              // Continue with other services
+              // Continue with other services, but check if we should abort
+              if (charError instanceof Error && charError.message.includes('disconnected')) {
+                throw charError; // Re-throw disconnection errors
+              }
             }
           }
           

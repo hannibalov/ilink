@@ -144,23 +144,116 @@ export class BLEManager {
       return null;
     }
 
-    // Store peripheral reference immediately to prevent garbage collection
-    this.peripherals.set(config.id, peripheral);
+    // Connect with retry logic for Raspberry Pi
+    // On Raspberry Pi, BLE connections can be fragile and may need multiple attempts
+    const maxConnectionAttempts = 3;
+    let device: ILinkDevice | null = null;
+    
+    for (let attempt = 1; attempt <= maxConnectionAttempts; attempt++) {
+      try {
+        // Get fresh peripheral reference if needed (for retries)
+        if (attempt > 1) {
+          console.log(`[BLE] Retry attempt ${attempt}/${maxConnectionAttempts} for ${config.name}...`);
+          
+          // Clean up previous attempt
+          if (device) {
+            try {
+              await device.disconnect();
+            } catch (disconnectError) {
+              // Ignore disconnect errors
+            }
+            device = null;
+          }
+          
+          // Wait before retry to let Bluetooth stack stabilize
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Re-scan to get a fresh peripheral reference
+          const freshPeripherals = await this.scanForDevices(8000);
+          
+          // Find the device again using the same logic as initial scan
+          const normalizeMac = (mac: string) => mac.toLowerCase().replace(/[:-]/g, '');
+          const targetMac = normalizeMac(config.macAddress);
+          
+          let freshPeripheral = freshPeripherals.find(p => {
+            if (p.address && p.address !== 'N/A') {
+              const normalizedAddress = normalizeMac(p.address);
+              if (normalizedAddress === targetMac) {
+                return true;
+              }
+            }
+            if (p.id) {
+              const normalizedId = normalizeMac(p.id);
+              if (normalizedId === targetMac || p.id.toLowerCase() === targetMac) {
+                return true;
+              }
+            }
+            return false;
+          });
+          
+          if (!freshPeripheral) {
+            // Try by name
+            freshPeripheral = freshPeripherals.find(p => {
+              const localName = p.advertisement.localName || '';
+              return localName.toLowerCase() === config.name.toLowerCase() ||
+                     (localName.length > 3 && config.name.length > 3 &&
+                      (localName.toLowerCase().includes(config.name.toLowerCase()) ||
+                       config.name.toLowerCase().includes(localName.toLowerCase())));
+            });
+          }
+          
+          if (!freshPeripheral) {
+            throw new Error(`Device ${config.name} not found during retry scan`);
+          }
+          
+          peripheral = freshPeripheral;
+        }
+        
+        // Store peripheral reference to prevent garbage collection
+        this.peripherals.set(config.id, peripheral);
 
-    // Create device instance
-    const device = new ILinkDevice(config, (state) => {
-      this.onDeviceStateUpdate(config.id, state);
-    });
-
-    // Connect
-    const connected = await device.connect(peripheral);
-    if (connected) {
-      this.devices.set(config.id, device);
-      return device;
-    } else {
-      this.peripherals.delete(config.id);
-      return null;
+        // Create device instance (or recreate for retries)
+        if (!device) {
+          device = new ILinkDevice(config, (state) => {
+            this.onDeviceStateUpdate(config.id, state);
+          });
+        }
+        
+        const connected = await device.connect(peripheral);
+        if (connected) {
+          this.devices.set(config.id, device);
+          return device;
+        } else {
+          // Connection failed - will retry if attempts remain
+          if (attempt < maxConnectionAttempts) {
+            continue;
+          }
+          break;
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        
+        // Check if this is a recoverable error (disconnection, need fresh reference)
+        const isRecoverable = errorMessage.includes('need fresh reference') || 
+                              errorMessage.includes('disconnected') ||
+                              errorMessage.includes('timeout');
+        
+        if (isRecoverable && attempt < maxConnectionAttempts) {
+          console.log(`[BLE] Connection failed (attempt ${attempt}/${maxConnectionAttempts}): ${errorMessage}`);
+          // Will retry on next iteration
+          continue;
+        }
+        
+        // For non-recoverable errors or last attempt, fail
+        console.error(`[BLE] Failed to connect to ${config.name} after ${attempt} attempt(s): ${errorMessage}`);
+        this.peripherals.delete(config.id);
+        return null;
+      }
     }
+    
+    // If we get here, connection failed after all attempts
+    this.peripherals.delete(config.id);
+    return null;
   }
 
   async disconnectDevice(deviceId: string): Promise<void> {
