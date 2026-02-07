@@ -68,17 +68,27 @@ export class ILinkDevice {
       }
 
       // Remove the temporary disconnect handler - we'll set up a proper one after discovery
-      this.peripheral.removeListener('disconnect', disconnectHandler);
+      if (this.peripheral && typeof this.peripheral.removeListener === 'function') {
+        this.peripheral.removeListener('disconnect', disconnectHandler);
+      }
 
-      // Discover services and characteristics with timeout
-      // Some devices need a longer timeout, especially on Linux/Raspberry Pi
-      console.log(`[Device] Discovering services and characteristics for ${this.config.name}...`);
+      // Discover only the iLink service and characteristics we need
+      // This is much faster and more reliable than discovering all services
+      const iLinkServiceUuid = 'a032';
+      const targetCharUuid = this.config.targetChar || 'a040';
+      const statusCharUuid = this.config.statusChar || 'a042';
+      
+      console.log(`[Device] Discovering iLink service (${iLinkServiceUuid}) and characteristics for ${this.config.name}...`);
+      console.log(`[Device] Looking for characteristics: ${targetCharUuid} (target), ${statusCharUuid} (status)`);
       console.log(`[Device] Peripheral state before discovery: ${this.peripheral.state}`);
       console.log(`[Device] Peripheral ID: ${this.peripheral.id}, Address: ${this.peripheral.address}`);
       
-      let characteristics;
-      const maxRetries = 2;
+      let characteristics: Characteristic[] = [];
+      const maxRetries = 3;
       let lastError: Error | null = null;
+      
+      // Shorter timeout since we're only discovering specific services
+      const discoveryTimeout = 10000; // 10 seconds should be plenty for specific service discovery
       
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -86,24 +96,44 @@ export class ILinkDevice {
             console.log(`[Device] Retry attempt ${attempt}/${maxRetries} for service discovery...`);
             // Verify still connected before retry
             if (!this.peripheral || this.peripheral.state !== 'connected') {
-              throw new Error('Peripheral disconnected before retry');
+              console.error(`[Device] Peripheral disconnected before retry, attempting reconnect...`);
+              // Try to reconnect
+              try {
+                await this.peripheral.connectAsync();
+                console.log(`[Device] Reconnected successfully`);
+                // Wait a moment after reconnect
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              } catch (reconnectError) {
+                throw new Error(`Reconnection failed: ${reconnectError instanceof Error ? reconnectError.message : String(reconnectError)}`);
+              }
+            } else {
+              // Wait a bit before retry
+              await new Promise(resolve => setTimeout(resolve, 1000));
             }
-            // Wait a bit before retry
-            await new Promise(resolve => setTimeout(resolve, 2000));
           }
           
-          const discoverPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
-          const discoverTimeout = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Service discovery timeout after 45 seconds (attempt ${attempt}/${maxRetries})`)), 45000)
+          // Discover only the iLink service and the characteristics we need
+          // This is much faster than discovering all services, especially on Linux
+          console.log(`[Device] Discovering specific service ${iLinkServiceUuid} and characteristics [${targetCharUuid}, ${statusCharUuid}]...`);
+          const discoverPromise = this.peripheral.discoverSomeServicesAndCharacteristicsAsync(
+            [iLinkServiceUuid],  // Only discover iLink service
+            [targetCharUuid, statusCharUuid]  // Only discover the characteristics we need
+          );
+          const discoverTimeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Service discovery timeout after ${discoveryTimeout / 1000} seconds (attempt ${attempt}/${maxRetries})`)), discoveryTimeout)
           );
           
-          const result = await Promise.race([discoverPromise, discoverTimeout]);
-          characteristics = result.characteristics;
+          const result = await Promise.race([discoverPromise, discoverTimeoutPromise]);
+          characteristics = result.characteristics || [];
           this.characteristics = characteristics; // Cache for later use
           console.log(`[Device] Found ${characteristics.length} characteristics for ${this.config.name}`);
           
-          // Success - break out of retry loop
-          break;
+          if (characteristics.length > 0) {
+            // Success - break out of retry loop
+            break;
+          } else {
+            throw new Error('No characteristics found');
+          }
         } catch (discoverError) {
           lastError = discoverError instanceof Error ? discoverError : new Error(String(discoverError));
           console.error(`[Device] Service discovery attempt ${attempt} failed for ${this.config.name}:`, lastError.message);
@@ -111,23 +141,42 @@ export class ILinkDevice {
           // Check if peripheral is still connected
           if (this.peripheral && this.peripheral.state !== 'connected') {
             console.error(`[Device] Peripheral disconnected during discovery attempt ${attempt}`);
-            throw new Error(`Peripheral disconnected during service discovery: ${lastError.message}`);
+            // Don't throw immediately - try to reconnect on next attempt
+            if (attempt < maxRetries) {
+              console.log(`[Device] Will attempt reconnection on next retry...`);
+            } else {
+              throw new Error(`Peripheral disconnected during service discovery: ${lastError.message}`);
+            }
           }
           
-          // If this was the last attempt, throw the error
+          // If this was the last attempt, try fallback to full discovery
           if (attempt === maxRetries) {
-            console.error(`[Device] All ${maxRetries} service discovery attempts failed for ${this.config.name}`);
+            console.warn(`[Device] Specific service discovery failed, trying fallback to full discovery...`);
+            try {
+              const fallbackPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
+              const fallbackTimeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Fallback discovery timeout')), 20000)
+              );
+              const fallbackResult = await Promise.race([fallbackPromise, fallbackTimeout]);
+              characteristics = fallbackResult.characteristics || [];
+              this.characteristics = characteristics;
+              console.log(`[Device] Fallback discovery found ${characteristics.length} characteristics`);
+              if (characteristics.length > 0) {
+                break; // Success with fallback
+              }
+            } catch (fallbackError) {
+              console.error(`[Device] Fallback discovery also failed:`, fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
+            }
             throw lastError;
           }
         }
       }
       
-      if (!characteristics) {
+      if (!characteristics || characteristics.length === 0) {
         throw new Error('Service discovery failed: no characteristics found after retries');
       }
       
-      // Find the target characteristic (default: a040)
-      const targetCharUuid = this.config.targetChar || 'a040';
+      // Find the target characteristic (we already have the UUIDs from above)
       const normalizedTargetChar = targetCharUuid.toLowerCase().replace(/-/g, '');
       
       console.log(`[Device] Looking for characteristic ${targetCharUuid} (normalized: ${normalizedTargetChar})`);
@@ -148,7 +197,6 @@ export class ILinkDevice {
       this.characteristic = char;
 
       // Also find and cache status characteristic if available
-      const statusCharUuid = this.config.statusChar || 'a042';
       const normalizedStatusChar = statusCharUuid.toLowerCase().replace(/-/g, '');
       const statusChar = characteristics.find(c => {
         const uuid = c.uuid.toLowerCase().replace(/-/g, '');
