@@ -24,32 +24,77 @@ export class ILinkDevice {
       // Store peripheral reference immediately
       this.peripheral = peripheral;
       
+      // Check peripheral state before attempting connection
+      const initialState = peripheral.state;
+      console.log(`[Device] Peripheral state for ${this.config.name}: ${initialState}`);
+      
+      // If peripheral is in an invalid state, we might need to wait or reset
+      if (initialState === 'disconnecting') {
+        console.log(`[Device] Waiting for ${this.config.name} to finish disconnecting...`);
+        // Wait a bit for disconnection to complete
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      // Set up disconnect handler BEFORE connecting to catch early disconnections
+      let disconnected = false;
+      let disconnectReason: string | null = null;
+      const disconnectHandler = (reason?: string) => {
+        disconnected = true;
+        disconnectReason = reason || 'Unknown reason';
+        console.log(`[Device] Disconnect detected for ${this.config.name}: ${disconnectReason}`);
+      };
+      
+      // Remove any existing disconnect listeners first
+      if (this.peripheral && typeof this.peripheral.removeAllListeners === 'function') {
+        this.peripheral.removeAllListeners('disconnect');
+      }
+      
+      // Set up disconnect handler before connecting
+      this.peripheral.once('disconnect', disconnectHandler);
+
       // Check if already connected
       if (peripheral.state !== 'connected') {
+        console.log(`[Device] Connecting to ${this.config.name} (current state: ${peripheral.state})...`);
+        
+        // On Raspberry Pi, sometimes we need to ensure the peripheral is ready
+        // Wait a small amount if state is 'disconnected' to let it settle
+        if (peripheral.state === 'disconnected') {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
         const connectPromise = peripheral.connectAsync();
         const timeoutPromise = new Promise<never>((_, reject) => 
           setTimeout(() => reject(new Error('Connection timeout after 15 seconds')), 15000)
         );
         
         await Promise.race([connectPromise, timeoutPromise]);
+        console.log(`[Device] Connection established to ${this.config.name}`);
+      } else {
+        console.log(`[Device] ${this.config.name} already connected`);
       }
 
-      // On Raspberry Pi/Linux, add a stabilization delay after connection
-      // This helps prevent premature disconnections during service discovery
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Set up disconnect handler immediately to catch early disconnections
-      let disconnected = false;
-      const disconnectHandler = () => {
-        disconnected = true;
-      };
-      this.peripheral.once('disconnect', disconnectHandler);
-
-      // Quick check to ensure we're still connected
+      // Verify connection state immediately after connect
       if (disconnected || !this.peripheral || this.peripheral.state !== 'connected') {
-        this.peripheral?.removeListener('disconnect', disconnectHandler);
-        throw new Error('Peripheral disconnected immediately after connection');
+        const reason = disconnectReason ? ` (${disconnectReason})` : '';
+        throw new Error(`Peripheral disconnected immediately after connection${reason}`);
       }
+
+      // On Raspberry Pi/Linux, verify connection stability with multiple checks
+      // Some devices disconnect very quickly, so we check multiple times
+      const stabilityChecks = 3;
+      const stabilityDelay = 500; // Check every 500ms
+      
+      for (let i = 0; i < stabilityChecks; i++) {
+        await new Promise(resolve => setTimeout(resolve, stabilityDelay));
+        
+        // Check connection state after each delay
+        if (disconnected || !this.peripheral || this.peripheral.state !== 'connected') {
+          const reason = disconnectReason ? ` (${disconnectReason})` : '';
+          throw new Error(`Peripheral disconnected during stabilization check ${i + 1}/${stabilityChecks}${reason}`);
+        }
+      }
+
+      console.log(`[Device] Connection stable for ${this.config.name}, proceeding with service discovery`);
 
       // Remove the temporary disconnect handler - we'll set up a proper one after discovery
       if (this.peripheral && typeof this.peripheral.removeListener === 'function') {
@@ -284,16 +329,27 @@ export class ILinkDevice {
       console.log(`[Device] Successfully connected to ${this.config.name}`);
       return true;
     } catch (error) {
-      console.error(`[Device] Failed to connect to ${this.config.name}:`, error instanceof Error ? error.message : String(error));
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[Device] Failed to connect to ${this.config.name}: ${errorMessage}`);
+      
+      // Log additional debugging info
+      if (this.peripheral) {
+        console.error(`[Device] Peripheral state: ${this.peripheral.state}`);
+        console.error(`[Device] Peripheral ID: ${this.peripheral.id}`);
+        console.error(`[Device] Peripheral address: ${this.peripheral.address}`);
+      }
+      
       // Try to disconnect if connection was partially established
       try {
-        if (this.peripheral) {
+        if (this.peripheral && this.peripheral.state === 'connected') {
           await this.peripheral.disconnectAsync();
         }
       } catch (disconnectError) {
         // Ignore disconnect errors
       }
-      return false;
+      
+      // Re-throw the error so the BLE manager can handle retries
+      throw error;
     }
   }
 

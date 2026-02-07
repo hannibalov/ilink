@@ -222,10 +222,12 @@ export class BLEManager {
         const connected = await device.connect(peripheral);
         if (connected) {
           this.devices.set(config.id, device);
+          console.log(`[BLE] Successfully connected to ${config.name} on attempt ${attempt}`);
           return device;
         } else {
           // Connection failed - will retry if attempts remain
           if (attempt < maxConnectionAttempts) {
+            console.log(`[BLE] Connection to ${config.name} returned false, will retry...`);
             continue;
           }
           break;
