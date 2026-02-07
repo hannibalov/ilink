@@ -7,30 +7,27 @@
 # NOTE: This uses the NEW MQTT configuration format (not platform: mqtt under light:)
 
 mqtt:
-  # First device - replace "living_room" with your device ID from .env
+  # Remember toreplace "living_room or bedroom" with your device ID from .env
   - light:
       name: "Living Room Light"
       unique_id: "ilink_living_room"
+      schema: json
       state_topic: "ilink/living_room/state"
       command_topic: "ilink/living_room/set"
-      schema: json
       brightness: true
-      rgb: true
-      color_temp: true
+      supported_color_modes: ["rgb"]
       optimistic: false
       qos: 1
       retain: true
 
-  # Second device - replace "bedroom" with your device ID from .env
   - light:
       name: "Bedroom Light"
       unique_id: "ilink_bedroom"
+      schema: json
       state_topic: "ilink/bedroom/state"
       command_topic: "ilink/bedroom/set"
-      schema: json
       brightness: true
-      rgb: true
-      color_temp: true
+      supported_color_modes: ["rgb"]
       optimistic: false
       qos: 1
       retain: true

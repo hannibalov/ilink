@@ -77,126 +77,68 @@ MQTT_PASSWORD=  # Optional
 MQTT_BASE_TOPIC=ilink
 
 # Device Configuration (JSON array)
-# Each device needs a unique "id" - this is used in MQTT topics
-DEVICES=[
-  {
-    "id": "living_room",
-    "name": "Living Room Light",
-    "macAddress": "aa:bb:cc:dd:ee:ff",
-    "targetChar": "a040",
-    "statusChar": "a042"
-  },
-  {
-    "id": "bedroom",
-    "name": "Bedroom Light",
-    "macAddress": "11:22:33:44:55:66",
-    "targetChar": "a040",
-    "statusChar": "a042"
-  }
-]
+# IMPORTANT: The DEVICES array MUST be on a single line in the .env file!
+DEVICES=[{"id":"living_room","name":"Living Room Light","macAddress":"aa:bb:cc:dd:ee:ff","targetChar":"a040","statusChar":"a042"}]
 ```
 
-**Important:** Each device must have a **unique `id`**. This `id` is used to create MQTT topics:
-- Command topic: `ilink/{id}/set`
-- State topic: `ilink/{id}/state`
+**Important Notes:**
+- **The `DEVICES` array MUST be on a single line in the `.env` file!** Environment variables don't support multi-line values, so the entire JSON array must be on one line.
+- Each device must have a **unique `id`**. This `id` is used to create MQTT topics:
+  - Command topic: `ilink/{id}/set`
+  - State topic: `ilink/{id}/state`
 
-Home Assistant uses these topics to distinguish between devices. Make sure each device has a different `id`!
+**Example with multiple devices (single line):**
+```env
+DEVICES=[{"id":"living_room","name":"Living Room Light","macAddress":"aa:bb:cc:dd:ee:ff","targetChar":"a040","statusChar":"a042"},{"id":"bedroom","name":"Bedroom Light","macAddress":"11:22:33:44:55:66","targetChar":"a040","statusChar":"a042"}]
+```
 
-### Finding Device MAC Addresses
+### Finding Device Addresses/IDs
 
-To find your iLink device MAC addresses:
-
-**Option 1: Use the built-in scan script (recommended)**
+**On Linux/Raspberry Pi:**
 ```bash
-# On Linux/Raspberry Pi, you'll need sudo:
+# Use the built-in scan script (requires sudo for BLE access)
+sudo yarn scan
+# or
 sudo npm run scan
 
 # Press Ctrl+C when done scanning
-# The script will output a JSON snippet you can copy to your .env file
+# The script will output device information including MAC addresses
 ```
 
-**Option 2: Use system Bluetooth tools**
+**On macOS:**
+macOS doesn't expose BLE MAC addresses due to privacy. You need to use device IDs instead:
+
 ```bash
-# Linux
-sudo hcitool lescan
+# Run the scan script
+yarn scan
 
-# Or using bluetoothctl
-bluetoothctl
-scan on
-# Wait for devices, then:
-devices
-exit
+# Look for devices named "ilink app" or similar
+# Copy the device ID (32-character hex string) shown in the output
+# Example: 816317bee3a2b892566ab3c7b4d95ec7
 ```
+
+Then use the device ID as the `macAddress` value in your `.env` file:
+
+```env
+# IMPORTANT: DEVICES array must be on a single line!
+DEVICES=[{"id":"living_room","name":"Living Room Light","macAddress":"816317bee3a2b892566ab3c7b4d95ec7","targetChar":"a040","statusChar":"a042"}]
+```
+
+**Note:** On macOS, the `macAddress` field accepts either:
+- Traditional MAC address format: `aa:bb:cc:dd:ee:ff` (Linux)
+- Device ID format: `816317bee3a2b892566ab3c7b4d95ec7` (macOS)
 
 ### Device Configuration Fields
 
 - `id`: **Unique identifier for the device** (used in MQTT topics) - **Must be unique for each device!**
   - Examples: `"living_room"`, `"bedroom"`, `"kitchen_light"`
   - Used in MQTT topics: `ilink/{id}/set` and `ilink/{id}/state`
-  - Home Assistant uses this to distinguish between devices
 - `name`: Friendly name (for logging and display)
-- `macAddress`: Bluetooth MAC address of the device (must be unique per physical device)
+- `macAddress`: Bluetooth MAC address (Linux) or device ID (macOS)
 - `targetChar`: Characteristic UUID for writing commands (default: `a040`)
 - `statusChar`: Characteristic UUID for reading status (default: `a042`)
 
-### Multiple Devices
-
-When you have multiple iLink devices, each one needs:
-1. **Unique `id`** - This is how Home Assistant distinguishes them
-2. **Unique `macAddress`** - The physical Bluetooth address
-3. **Corresponding Home Assistant configuration** - One light entity per device
-
-Example with 2 devices:
-
-**.env file:**
-```env
-DEVICES=[
-  {"id":"living_room","name":"Living Room","macAddress":"aa:bb:cc:dd:ee:ff"},
-  {"id":"bedroom","name":"Bedroom","macAddress":"11:22:33:44:55:66"}
-]
-```
-
-**Home Assistant configuration.yaml:**
-```yaml
-light:
-  - platform: mqtt
-    name: "Living Room Light"
-    unique_id: "ilink_living_room"
-    state_topic: "ilink/living_room/state"
-    command_topic: "ilink/living_room/set"
-    brightness: true
-    rgb: true
-    schema: json
-    optimistic: false
-    qos: 1
-    retain: true
-
-  - platform: mqtt
-    name: "Bedroom Light"
-    unique_id: "ilink_bedroom"
-    state_topic: "ilink/bedroom/state"
-    command_topic: "ilink/bedroom/set"
-    brightness: true
-    rgb: true
-    schema: json
-    optimistic: false
-    qos: 1
-    retain: true
-```
-
-Notice how the `id` in the `.env` file matches the topic names in Home Assistant!
-
 ## Running
-
-### First Time Setup
-
-After installing dependencies, build the TypeScript code:
-
-```bash
-npm run build
-# or
-yarn build
-```
 
 ### Development Mode
 
@@ -206,6 +148,11 @@ Runs TypeScript directly without building (good for development):
 npm run dev
 # or
 yarn dev
+```
+
+**On Linux/Raspberry Pi:** You'll likely need to run with `sudo` for Bluetooth access:
+```bash
+sudo yarn dev
 ```
 
 ### Production Mode
@@ -218,51 +165,157 @@ npm start
 yarn start
 ```
 
-**Note:** `npm start` will automatically build if needed, but it's faster to build once with `npm run build` first.
-
 **On Linux/Raspberry Pi:** You'll likely need to run with `sudo` for Bluetooth access:
 ```bash
-sudo npm start
+sudo yarn start
 ```
+
+## Running as a Service on Raspberry Pi
+
+To run the bridge automatically on boot and keep it running:
+
+### Step 1: Build the Project
+
+```bash
+cd /path/to/ilink
+yarn build
+```
+
+### Step 2: Set Up the Systemd Service
+
+Use the provided setup script:
+
+```bash
+sudo ./scripts/setup-service.sh
+```
+
+This script will:
+- Create a systemd service file at `/etc/systemd/system/ilink-bridge.service`
+- Configure it to run on boot
+- Set up proper logging and restart behavior
+
+### Step 3: Start the Service
+
+```bash
+# Start the service
+sudo systemctl start ilink-bridge
+
+# Check status
+sudo systemctl status ilink-bridge
+
+# View logs
+sudo journalctl -u ilink-bridge -f
+```
+
+### Step 4: Enable on Boot
+
+The setup script automatically enables the service, but you can verify:
+
+```bash
+# Enable service to start on boot
+sudo systemctl enable ilink-bridge
+
+# Verify it's enabled
+sudo systemctl is-enabled ilink-bridge
+```
+
+### Service Management Commands
+
+```bash
+# Start service
+sudo systemctl start ilink-bridge
+
+# Stop service
+sudo systemctl stop ilink-bridge
+
+# Restart service
+sudo systemctl restart ilink-bridge
+
+# Check status
+sudo systemctl status ilink-bridge
+
+# View logs (follow)
+sudo journalctl -u ilink-bridge -f
+
+# View recent logs
+sudo journalctl -u ilink-bridge -n 100
+
+# Disable auto-start on boot
+sudo systemctl disable ilink-bridge
+```
+
+### Troubleshooting the Service
+
+If the service fails to start:
+
+1. **Check service status:**
+   ```bash
+   sudo systemctl status ilink-bridge
+   ```
+
+2. **Check logs:**
+   ```bash
+   sudo journalctl -u ilink-bridge -n 50
+   ```
+
+3. **Verify the build:**
+   ```bash
+   ls -la dist/index.js
+   ```
+
+4. **Test manually:**
+   ```bash
+   cd /path/to/ilink
+   sudo node dist/index.js
+   ```
+
+5. **Check Bluetooth permissions:**
+   - The service runs as your user, but BLE on Linux typically requires root
+   - The setup script may need adjustment if you encounter permission errors
+   - Consider running with `sudo` or setting up capabilities (see Permission Errors section)
 
 ## Home Assistant Configuration
 
-### Where to Put the YAML Configuration
+### Option 1: YAML Configuration (Recommended)
 
-**Important:** The YAML configuration goes in your Home Assistant `configuration.yaml` file. The location depends on your installation:
-
-- **Home Assistant OS / Supervised**: `/config/configuration.yaml`
-- **Docker**: Usually mounted at `/config/configuration.yaml`
-- **Linux**: `~/.homeassistant/configuration.yaml` or `/etc/homeassistant/configuration.yaml`
-- **macOS**: `~/.homeassistant/configuration.yaml`
-
-You can also access it from Home Assistant UI:
-1. Go to **Settings** → **Add-ons** → **File editor** (if installed)
-2. Or use **Settings** → **Developer Tools** → **YAML** (for advanced users)
-
-### Option 1: Manual Configuration (YAML)
-
-Add to your `configuration.yaml`:
+Add to your Home Assistant `configuration.yaml`:
 
 ```yaml
-light:
-  - platform: mqtt
-    name: "Living Room Light"
-    unique_id: "ilink_light1"
-    state_topic: "ilink/light1/state"
-    command_topic: "ilink/light1/set"
-    brightness: true
-    rgb: true
-    color_temp: true
-    schema: json
-    optimistic: false
-    qos: 1
-    retain: true
+mqtt:
+  - light:
+      name: "Living Room Light"
+      unique_id: "ilink_living_room"
+      state_topic: "ilink/living_room/state"
+      command_topic: "ilink/living_room/set"
+      schema: json
+      brightness: true
+      rgb: true
+      color_temp: true
+      optimistic: false
+      qos: 1
+      retain: true
+
+  - light:
+      name: "Bedroom Light"
+      unique_id: "ilink_bedroom"
+      state_topic: "ilink/bedroom/state"
+      command_topic: "ilink/bedroom/set"
+      schema: json
+      brightness: true
+      rgb: true
+      color_temp: true
+      optimistic: false
+      qos: 1
+      retain: true
 ```
+
+**Important:** 
+- Replace `living_room` and `bedroom` with your actual device IDs from `.env`
+- The `id` in `.env` must match the topic names: `ilink/{id}/state` and `ilink/{id}/set`
+- Each device needs a unique `unique_id`
 
 **After editing, restart Home Assistant:**
 - Go to **Settings** → **System** → **Restart**
-- Or use the restart button in the UI
 
 ### Option 2: MQTT Integration UI
 
@@ -271,12 +324,15 @@ light:
 3. Add a device manually:
    - **Name**: Living Room Light
    - **Type**: Light
-   - **State Topic**: `ilink/light1/state`
-   - **Command Topic**: `ilink/light1/set`
+   - **State Topic**: `ilink/living_room/state`
+   - **Command Topic**: `ilink/living_room/set`
    - **Brightness**: Enabled
    - **RGB**: Enabled
    - **Color Temperature**: Enabled
    - **Schema**: JSON
+   - **Optimistic**: Off
+   - **QoS**: 1
+   - **Retain**: On
 
 ## MQTT Topics
 
@@ -316,6 +372,130 @@ light:
 }
 ```
 
+## Testing
+
+### Test MQTT Communication
+
+```bash
+# Subscribe to see all MQTT messages
+mosquitto_sub -h localhost -t 'ilink/#' -v
+
+# Send a test command (in another terminal)
+mosquitto_pub -h localhost -t 'ilink/living_room/set' -m '{"state":"ON"}'
+```
+
+### Verify Bridge is Running
+
+You should see output like:
+```
+[Main] Starting iLink Home Assistant Bridge...
+[Main] Loaded 2 device(s)
+[MQTT] Connected to broker at mqtt://localhost:1883
+[BLE] Adapter powered on
+[Main] Connecting to Living Room Light...
+[Device] Successfully connected to Living Room Light (living_room)
+[Main] Bridge running. 2 device(s) connected.
+```
+
+## Troubleshooting
+
+### Device Not Found
+
+**On Linux:**
+- Ensure Bluetooth is enabled and the device is powered on
+- Check that the MAC address is correct (use `sudo yarn scan`)
+- Try scanning for devices manually
+
+**On macOS:**
+- Use device IDs instead of MAC addresses (see Finding Device Addresses/IDs section)
+- Run `yarn scan` to find device IDs
+- Make sure devices are powered on and in range
+
+### MQTT Connection Failed
+
+- Verify MQTT broker is running: `mosquitto_sub -h localhost -t '#' -v`
+- Check broker URL and credentials in `.env`
+- Ensure firewall allows MQTT port (default: 1883)
+- If broker is on a different machine, use the IP address: `mqtt://192.168.x.x:1883`
+
+### Permission Errors (Linux)
+
+On Linux, Bluetooth Low Energy (BLE) operations typically require root privileges. You have two options:
+
+**Option 1: Run with sudo (simplest)**
+```bash
+sudo yarn scan
+sudo yarn start
+```
+
+**Option 2: Set up capabilities (more secure)**
+```bash
+# Add user to bluetooth group
+sudo usermod -aG bluetooth $USER
+
+# Set capabilities on node binary (allows BLE without full root)
+sudo setcap cap_net_raw+eip $(eval readlink -f $(which node))
+
+# Log out and back in, or use:
+newgrp bluetooth
+
+# Then try without sudo
+yarn scan
+```
+
+**Note:** The `noble` library requires elevated privileges on Linux. Running with `sudo` is the simplest solution.
+
+### Device Disconnects Frequently
+
+- Ensure device is within range
+- Check for interference from other Bluetooth devices
+- Verify the device is powered on
+- Check bridge logs for error messages
+
+### Home Assistant Entity Not Appearing
+
+1. **Check Home Assistant logs:**
+   - Go to **Settings** → **System** → **Logs**
+   - Look for errors related to MQTT or lights
+
+2. **Verify MQTT integration:**
+   - Go to **Settings** → **Devices & Services** → **MQTT**
+   - Ensure MQTT is configured and connected
+
+3. **Check topics match:**
+   - Device ID in `.env` must match topic names in Home Assistant config
+   - Topics are case-sensitive
+
+4. **Test MQTT directly:**
+   ```bash
+   # Subscribe to see if state is being published
+   mosquitto_sub -h localhost -t 'ilink/#' -v
+   
+   # Should see state updates every 30 seconds
+   ```
+
+### Service Won't Start on Raspberry Pi
+
+1. **Check service logs:**
+   ```bash
+   sudo journalctl -u ilink-bridge -n 50
+   ```
+
+2. **Verify build exists:**
+   ```bash
+   ls -la dist/index.js
+   ```
+
+3. **Test manually:**
+   ```bash
+   cd /path/to/ilink
+   sudo node dist/index.js
+   ```
+
+4. **Check Bluetooth permissions:**
+   - Service may need to run as root or with capabilities
+   - See Permission Errors section above
+
 ## Architecture
 
 ```
@@ -335,80 +515,6 @@ Home Assistant
                     └─► iLink Light (Bluetooth)
 ```
 
-## Integration with Monorepo
-
-This project is designed to be integrated into the `smart-home` monorepo after the refactor described in `monorepo_architecture_migration.md`. Once integrated:
-
-1. Move this to `packages/ilink-bridge` or similar
-2. Share types from `packages/shared`
-3. Reuse BLE utilities from `packages/backend`
-4. Integrate with the backend's MQTT adapter if needed
-
-## Testing
-
-See [TESTING.md](./TESTING.md) for a complete guide on:
-- Verifying the bridge is working
-- Testing MQTT communication
-- Verifying Home Assistant integration
-- Troubleshooting common issues
-
-Quick test commands:
-
-```bash
-# Subscribe to see all MQTT messages
-mosquitto_sub -h localhost -t 'ilink/#' -v
-
-# Send a test command (in another terminal)
-mosquitto_pub -h localhost -t 'ilink/light1/set' -m '{"state":"ON"}'
-```
-
-## Troubleshooting
-
-### Device Not Found
-
-- Ensure Bluetooth is enabled and the device is powered on
-- Check that the MAC address is correct
-- Try scanning for devices manually
-
-### MQTT Connection Failed
-
-- Verify MQTT broker is running: `mosquitto_sub -h localhost -t '#' -v`
-- Check broker URL and credentials
-- Ensure firewall allows MQTT port (default: 1883)
-
-### Permission Errors (Linux)
-
-On Linux, Bluetooth Low Energy (BLE) operations typically require root privileges. You have two options:
-
-**Option 1: Run with sudo (simplest)**
-```bash
-sudo npm run scan
-sudo npm start
-```
-
-**Option 2: Set up capabilities (more secure, but complex)**
-```bash
-# Add user to bluetooth group
-sudo usermod -aG bluetooth $USER
-
-# Set capabilities on node binary (allows BLE without full root)
-sudo setcap cap_net_raw+eip $(eval readlink -f $(which node))
-
-# Log out and back in, or use:
-newgrp bluetooth
-
-# Then try without sudo
-npm run scan
-```
-
-**Note:** The `noble` library requires elevated privileges on Linux. Running with `sudo` is the simplest solution for development and testing.
-
-### Device Disconnects Frequently
-
-- Ensure device is within range
-- Check for interference from other Bluetooth devices
-- Increase reconnection attempts in code if needed
-
 ## Development
 
 ### Project Structure
@@ -423,6 +529,8 @@ ilink/
 │   ├── encoding.ts       # iLink protocol encoding/decoding
 │   └── types.ts          # TypeScript types
 ├── dist/                 # Compiled JavaScript
+├── scripts/
+│   └── setup-service.sh  # Systemd service setup script
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -432,14 +540,30 @@ ilink/
 
 ```bash
 npm run build
+# or
+yarn build
 ```
 
 ### Watching for Changes
 
 ```bash
 npm run watch
+# or
+yarn watch
+```
+
+### Running Tests
+
+```bash
+npm test
+# or
+yarn test
 ```
 
 ## License
 
 MIT
+
+# Author 
+
+Rodrigo Pizarro @hannibalov

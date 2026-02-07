@@ -5,6 +5,8 @@ import { LightState, DeviceConfig, MQTTCommand } from './types';
 export class ILinkDevice {
   private peripheral: Peripheral | null = null;
   private characteristic: Characteristic | null = null;
+  private statusCharacteristic: Characteristic | null = null;
+  private characteristics: Characteristic[] = [];
   private state: LightState = {
     power: false,
     brightness: 100,
@@ -19,9 +21,11 @@ export class ILinkDevice {
 
   async connect(peripheral: Peripheral): Promise<boolean> {
     try {
+      // Store peripheral reference immediately
       this.peripheral = peripheral;
       
       console.log(`[Device] Attempting to connect to ${this.config.name}...`);
+      console.log(`[Device] Peripheral ID: ${peripheral.id}, Address: ${peripheral.address}, State: ${peripheral.state}`);
       
       // Check if already connected
       if (peripheral.state === 'connected') {
@@ -47,9 +51,17 @@ export class ILinkDevice {
       console.log(`[Device] Waiting 2 seconds before service discovery...`);
       await new Promise(resolve => setTimeout(resolve, 2000));
 
+      // Verify peripheral is still connected before discovery
+      if (!this.peripheral || this.peripheral.state !== 'connected') {
+        console.error(`[Device] Peripheral lost connection before service discovery for ${this.config.name}`);
+        console.error(`[Device] Peripheral state: ${this.peripheral?.state || 'null'}`);
+        throw new Error('Peripheral disconnected before service discovery');
+      }
+
       // Discover services and characteristics with timeout
       console.log(`[Device] Discovering services and characteristics for ${this.config.name}...`);
-      const discoverPromise = peripheral.discoverAllServicesAndCharacteristicsAsync();
+      console.log(`[Device] Peripheral state before discovery: ${this.peripheral.state}`);
+      const discoverPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
       const discoverTimeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Service discovery timeout after 30 seconds')), 30000)
       );
@@ -58,6 +70,7 @@ export class ILinkDevice {
       try {
         const result = await Promise.race([discoverPromise, discoverTimeout]);
         characteristics = result.characteristics;
+        this.characteristics = characteristics; // Cache for later use
         console.log(`[Device] Found ${characteristics.length} characteristics for ${this.config.name}`);
       } catch (discoverError) {
         console.error(`[Device] Service discovery failed for ${this.config.name}:`, discoverError);
@@ -84,10 +97,26 @@ export class ILinkDevice {
       console.log(`[Device] Found characteristic ${targetCharUuid} for ${this.config.name}`);
 
       this.characteristic = char;
+
+      // Also find and cache status characteristic if available
+      const statusCharUuid = this.config.statusChar || 'a042';
+      const normalizedStatusChar = statusCharUuid.toLowerCase().replace(/-/g, '');
+      const statusChar = characteristics.find(c => {
+        const uuid = c.uuid.toLowerCase().replace(/-/g, '');
+        return uuid === normalizedStatusChar || uuid === statusCharUuid;
+      });
+
+      if (statusChar && statusChar.properties?.includes('read')) {
+        this.statusCharacteristic = statusChar;
+        console.log(`[Device] Found status characteristic ${statusCharUuid} for ${this.config.name}`);
+      } else {
+        console.warn(`[Device] Status characteristic ${statusCharUuid} not found or not readable for ${this.config.name}`);
+      }
+
       this.reconnectAttempts = 0;
 
       // Set up disconnect handler
-      peripheral.once('disconnect', () => {
+      this.peripheral.once('disconnect', () => {
         console.log(`[Device] ${this.config.name} disconnected`);
         this.characteristic = null;
         this.peripheral = null;
@@ -196,27 +225,18 @@ export class ILinkDevice {
   }
 
   async readState(): Promise<LightState | null> {
-    if (!this.characteristic) {
+    if (!this.statusCharacteristic) {
+      console.log(`[Device] No status characteristic available for ${this.config.name}`);
       return null;
     }
 
-    const statusCharUuid = this.config.statusChar || 'a042';
-    const normalizedStatusChar = statusCharUuid.toLowerCase().replace(/-/g, '');
+    if (!this.peripheral || this.peripheral.state !== 'connected') {
+      console.warn(`[Device] Cannot read state - ${this.config.name} not connected`);
+      return null;
+    }
 
     try {
-      // Find status characteristic
-      const { characteristics } = await this.peripheral!.discoverAllServicesAndCharacteristicsAsync();
-      const statusChar = characteristics.find(c => {
-        const uuid = c.uuid.toLowerCase().replace(/-/g, '');
-        return uuid === normalizedStatusChar || uuid === statusCharUuid;
-      });
-
-      if (!statusChar || !statusChar.properties?.includes('read')) {
-        console.warn(`[Device] Status characteristic ${statusCharUuid} not found or not readable for ${this.config.name}`);
-        return null;
-      }
-
-      const data = await statusChar.readAsync();
+      const data = await this.statusCharacteristic.readAsync();
       const hex = data.toString('hex');
       const parsed = parseILinkStatus(hex);
 
