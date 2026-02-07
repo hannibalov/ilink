@@ -3,6 +3,7 @@ import { BLEManager } from './ble-manager';
 import { MQTTBridge } from './mqtt-bridge';
 import { DeviceConfig, LightState } from './types';
 import { ILinkDevice } from './device';
+import { Peripheral } from '@abandonware/noble';
 
 dotenv.config();
 
@@ -83,43 +84,97 @@ async function main() {
     const scannedPeripherals = await bleManager.scanForAllDevices(config.devices);
     console.log(`[Main] Found ${scannedPeripherals.size} of ${config.devices.length} device(s) during scan`);
 
-    // Connect to all configured devices sequentially with delays
-    // This prevents overwhelming the Bluetooth stack on Raspberry Pi
+    // OPTIMIZED: Try connecting to all devices in parallel first
+    // This tests if the adapter can handle concurrent connections
+    // If parallel fails, fall back to sequential with optimized timing
     const connectedDevices: ILinkDevice[] = [];
-
-    for (let i = 0; i < config.devices.length; i++) {
-      const deviceConfig = config.devices[i];
-      console.log(`[Main] Connecting to ${deviceConfig.name}...`);
-      
-      // Get the peripheral from the upfront scan
+    
+    console.log('[Main] Attempting parallel connections to test concurrent support...');
+    const connectionPromises = config.devices.map(async (deviceConfig) => {
       const peripheral = scannedPeripherals.get(deviceConfig.id);
       if (!peripheral) {
         console.error(`[Main] Peripheral not found for ${deviceConfig.name} - skipping`);
-        continue;
+        return null;
       }
       
-      // Add a delay before connecting (except for the first device)
-      // Increased delay to 5 seconds to let Bluetooth stack stabilize after previous connection
-      if (i > 0) {
-        await new Promise(resolve => setTimeout(resolve, 5000));
+      console.log(`[Main] Starting connection to ${deviceConfig.name}...`);
+      try {
+        const device = await bleManager.connectDevice(deviceConfig, peripheral);
+        if (device) {
+          mqttBridge.registerDevice(device, deviceConfig);
+          const initialState = device.getState();
+          mqttBridge.publishState(deviceConfig.id, initialState);
+          console.log(`[Main] ✓ Successfully connected to ${deviceConfig.name}`);
+          return device;
+        }
+        return null;
+      } catch (error) {
+        console.error(`[Main] Failed to connect to ${deviceConfig.name}:`, error);
+        return null;
       }
-      
-      const device = await bleManager.connectDevice(deviceConfig, peripheral);
-      
+    });
+    
+    // Wait for all parallel connection attempts (with timeout)
+    const connectionTimeout = 90000; // 90 seconds for all connections
+    const parallelResults = await Promise.race([
+      Promise.all(connectionPromises),
+      new Promise<Array<ILinkDevice | null>>((resolve) => 
+        setTimeout(() => resolve([]), connectionTimeout)
+      )
+    ]);
+    
+    // Collect successful connections
+    for (const device of parallelResults) {
       if (device) {
-        mqttBridge.registerDevice(device, deviceConfig);
         connectedDevices.push(device);
-        
-        // Publish initial state
-        const initialState = device.getState();
-        mqttBridge.publishState(deviceConfig.id, initialState);
-        
-        // Add a small delay after successful connection to let it stabilize
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } else {
-        console.error(`[Main] Failed to connect to ${deviceConfig.name}`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
       }
+    }
+    
+    // If parallel connections didn't work well, try sequential fallback for remaining devices
+    if (connectedDevices.length < config.devices.length) {
+      console.log(`[Main] Parallel connections: ${connectedDevices.length}/${config.devices.length} succeeded`);
+      console.log(`[Main] Attempting sequential connections for remaining devices...`);
+      
+      // Find which device configs are already connected
+      const connectedIds = new Set<string>();
+      for (const deviceConfig of config.devices) {
+        const device = bleManager.getDevice(deviceConfig.id);
+        if (device && connectedDevices.includes(device)) {
+          connectedIds.add(deviceConfig.id);
+        }
+      }
+      
+      for (let i = 0; i < config.devices.length; i++) {
+        const deviceConfig = config.devices[i];
+        
+        // Skip if already connected
+        if (connectedIds.has(deviceConfig.id)) {
+          continue;
+        }
+        
+        const peripheral = scannedPeripherals.get(deviceConfig.id);
+        if (!peripheral) {
+          continue;
+        }
+        
+        // Add delay between sequential attempts (reduced from 5s to 2s with optimizations)
+        if (connectedDevices.length > 0) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+        console.log(`[Main] Connecting to ${deviceConfig.name} (sequential fallback)...`);
+        const device = await bleManager.connectDevice(deviceConfig, peripheral);
+        
+        if (device) {
+          mqttBridge.registerDevice(device, deviceConfig);
+          connectedDevices.push(device);
+          const initialState = device.getState();
+          mqttBridge.publishState(deviceConfig.id, initialState);
+          console.log(`[Main] ✓ Successfully connected to ${deviceConfig.name}`);
+        }
+      }
+    } else {
+      console.log(`[Main] ✓ All ${connectedDevices.length} devices connected successfully in parallel!`);
     }
 
     if (connectedDevices.length === 0) {

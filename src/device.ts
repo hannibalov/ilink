@@ -81,10 +81,10 @@ export class ILinkDevice {
         throw new Error(`Peripheral disconnected immediately after connection${reason}`);
       }
 
-      // CRITICAL FIX FOR ERROR 62: Force immediate GATT activity after connection
+      // OPTIMIZED FOR CONCURRENT CONNECTIONS: Force immediate GATT activity after connection
       // macOS CoreBluetooth sends implicit MTU exchange and GATT traffic immediately
       // BlueZ does NOT - this causes Error 62 (Connection Failed to be Established)
-      // Solution: Exchange MTU immediately, then send dummy GATT operation if needed
+      // For concurrent connections, we need to establish GATT quickly to prevent timeout
       console.log(`[Device] Connection established, forcing immediate GATT activity for ${this.config.name}`);
 
       // Remove the temporary disconnect handler - we'll set up a proper one after discovery
@@ -94,22 +94,26 @@ export class ILinkDevice {
 
       // Step 1: Try MTU exchange immediately (if supported by noble)
       // This is what macOS does implicitly and BlueZ doesn't
+      // For concurrent connections, use a smaller MTU (185) to reduce controller load
+      // This allows the adapter to handle multiple connections more efficiently
       try {
         if (this.peripheral && typeof (this.peripheral as any).exchangeMtu === 'function') {
-          console.log(`[Device] Exchanging MTU for ${this.config.name}...`);
+          console.log(`[Device] Exchanging MTU for ${this.config.name} (optimized for concurrency)...`);
+          // Use 185 instead of 247 to reduce controller load for concurrent connections
+          const optimizedMtu = 185;
           await new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(() => {
               reject(new Error('MTU exchange timeout'));
             }, 2000);
             
             try {
-              (this.peripheral as any).exchangeMtu(247, (error?: Error) => {
+              (this.peripheral as any).exchangeMtu(optimizedMtu, (error?: Error) => {
                 clearTimeout(timeout);
                 if (error) {
                   console.warn(`[Device] MTU exchange failed (non-fatal): ${error.message}`);
                   resolve(); // Continue anyway
                 } else {
-                  console.log(`[Device] MTU exchange successful for ${this.config.name}`);
+                  console.log(`[Device] MTU exchange successful for ${this.config.name} (MTU: ${optimizedMtu})`);
                   resolve();
                 }
               });
@@ -126,6 +130,10 @@ export class ILinkDevice {
         // Non-fatal - continue with discovery
         console.warn(`[Device] MTU exchange error (non-fatal): ${mtuError instanceof Error ? mtuError.message : String(mtuError)}`);
       }
+      
+      // Step 2: Small delay to let MTU exchange complete before GATT discovery
+      // This helps prevent connection parameter conflicts when multiple devices connect
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       // Discover services and characteristics
       // IMPORTANT: Start discovery immediately after connection to prevent timeout (error 62)
@@ -165,9 +173,9 @@ export class ILinkDevice {
           // CRITICAL: Start discovery immediately - no delays!
           // The device will disconnect (error 62) if it doesn't receive GATT requests quickly
           
-          // Discover ONLY the specific iLink service (a032) with a SHORT timeout
-          // Use a very short timeout to fail fast and retry if needed
-          // This prevents the device from timing out (error 62)
+          // OPTIMIZED: Discover ONLY the specific iLink service (a032) with optimized timeout
+          // For concurrent connections, use slightly longer timeout but still fail-fast
+          // This balances between allowing time for controller scheduling and preventing hangs
           const services = await new Promise<any[]>((resolve, reject) => {
             // Check connection state before starting discovery
             if (!this.peripheral || this.peripheral.state !== 'connected') {
@@ -175,8 +183,10 @@ export class ILinkDevice {
               return;
             }
             
-            // Use a shorter timeout - if it takes longer, we'll retry
-            const shortTimeout = 3000; // 3 seconds - if it takes longer, retry
+            // Optimized timeout for concurrent connections: 5 seconds
+            // Longer than single connection (3s) to account for controller scheduling
+            // But still short enough to fail-fast and retry
+            const shortTimeout = 5000; // 5 seconds - optimized for concurrent connections
             
             const timeout = setTimeout(() => {
               // Check if still connected when timeout occurs
@@ -239,7 +249,9 @@ export class ILinkDevice {
               }
               
               const serviceChars = await new Promise<Characteristic[]>((resolve, reject) => {
-                const shortCharTimeout = 3000; // 3 seconds for characteristics too
+                // Optimized timeout for concurrent connections: 5 seconds
+                // Allows controller time to schedule between multiple devices
+                const shortCharTimeout = 5000; // 5 seconds - optimized for concurrent connections
                 const timeout = setTimeout(() => {
                   if (!this.peripheral || this.peripheral.state !== 'connected') {
                     reject(new Error('Peripheral disconnected during characteristic discovery timeout'));
