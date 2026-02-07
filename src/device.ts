@@ -79,15 +79,50 @@ export class ILinkDevice {
         throw new Error(`Peripheral disconnected immediately after connection${reason}`);
       }
 
-      // CRITICAL: Start service discovery immediately after connection
-      // Many BLE devices (especially on Raspberry Pi) will disconnect with error 62
-      // if they don't receive GATT requests within a short time window
-      // Don't wait - start discovery right away!
-      console.log(`[Device] Connection established, starting service discovery immediately for ${this.config.name}`);
+      // CRITICAL FIX FOR ERROR 62: Force immediate GATT activity after connection
+      // macOS CoreBluetooth sends implicit MTU exchange and GATT traffic immediately
+      // BlueZ does NOT - this causes Error 62 (Connection Failed to be Established)
+      // Solution: Exchange MTU immediately, then send dummy GATT operation if needed
+      console.log(`[Device] Connection established, forcing immediate GATT activity for ${this.config.name}`);
 
       // Remove the temporary disconnect handler - we'll set up a proper one after discovery
       if (this.peripheral && typeof this.peripheral.removeListener === 'function') {
         this.peripheral.removeListener('disconnect', disconnectHandler);
+      }
+
+      // Step 1: Try MTU exchange immediately (if supported by noble)
+      // This is what macOS does implicitly and BlueZ doesn't
+      try {
+        if (this.peripheral && typeof (this.peripheral as any).exchangeMtu === 'function') {
+          console.log(`[Device] Exchanging MTU for ${this.config.name}...`);
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error('MTU exchange timeout'));
+            }, 2000);
+            
+            try {
+              (this.peripheral as any).exchangeMtu(247, (error?: Error) => {
+                clearTimeout(timeout);
+                if (error) {
+                  console.warn(`[Device] MTU exchange failed (non-fatal): ${error.message}`);
+                  resolve(); // Continue anyway
+                } else {
+                  console.log(`[Device] MTU exchange successful for ${this.config.name}`);
+                  resolve();
+                }
+              });
+            } catch (err) {
+              clearTimeout(timeout);
+              console.warn(`[Device] MTU exchange not available (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+              resolve(); // Continue anyway
+            }
+          });
+        } else {
+          console.log(`[Device] MTU exchange not available on this platform, skipping...`);
+        }
+      } catch (mtuError) {
+        // Non-fatal - continue with discovery
+        console.warn(`[Device] MTU exchange error (non-fatal): ${mtuError instanceof Error ? mtuError.message : String(mtuError)}`);
       }
 
       // Discover services and characteristics
