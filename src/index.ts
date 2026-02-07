@@ -114,19 +114,25 @@ async function main() {
       }
     });
     
-    // Wait for all parallel connection attempts (with timeout)
-    const connectionTimeout = 90000; // 90 seconds for all connections
-    const parallelResults = await Promise.race([
-      Promise.all(connectionPromises),
-      new Promise<Array<ILinkDevice | null>>((resolve) => 
-        setTimeout(() => resolve([]), connectionTimeout)
+    // Wait for all parallel connection attempts with individual timeouts
+    // Use Promise.allSettled to collect all results, even if some timeout
+    const connectionTimeout = 90000; // 90 seconds per device
+    const parallelResults = await Promise.allSettled(
+      connectionPromises.map(promise => 
+        Promise.race([
+          promise,
+          new Promise<null>((resolve) => 
+            setTimeout(() => resolve(null), connectionTimeout)
+          )
+        ])
       )
-    ]);
+    );
     
-    // Collect successful connections
-    for (const device of parallelResults) {
-      if (device) {
-        connectedDevices.push(device);
+    // Collect successful connections from settled promises
+    for (let i = 0; i < parallelResults.length; i++) {
+      const result = parallelResults[i];
+      if (result.status === 'fulfilled' && result.value) {
+        connectedDevices.push(result.value);
       }
     }
     
@@ -144,6 +150,8 @@ async function main() {
         }
       }
       
+      // Sequential fallback: try connecting remaining devices one at a time
+      // Note: If adapter doesn't support concurrent connections, only the first device will work
       for (let i = 0; i < config.devices.length; i++) {
         const deviceConfig = config.devices[i];
         
@@ -157,9 +165,16 @@ async function main() {
           continue;
         }
         
-        // Add delay between sequential attempts (reduced from 5s to 2s with optimizations)
+        // If we already have a connected device, warn that concurrent connections may not be supported
         if (connectedDevices.length > 0) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          console.log(`[Main] WARNING: Attempting to connect ${deviceConfig.name} while ${connectedDevices.length} device(s) already connected.`);
+          console.log(`[Main] If this times out, the adapter likely doesn't support concurrent BLE connections.`);
+          console.log(`[Main] Consider using a USB Bluetooth adapter or ESP32 BLE proxy for multiple devices.`);
+        }
+        
+        // Add delay before attempting connection
+        if (connectedDevices.length > 0) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
         }
         
         console.log(`[Main] Connecting to ${deviceConfig.name} (sequential fallback)...`);
@@ -171,6 +186,12 @@ async function main() {
           const initialState = device.getState();
           mqttBridge.publishState(deviceConfig.id, initialState);
           console.log(`[Main] ✓ Successfully connected to ${deviceConfig.name}`);
+        } else {
+          console.error(`[Main] ✗ Failed to connect to ${deviceConfig.name}`);
+          if (connectedDevices.length > 0) {
+            console.error(`[Main] This confirms the adapter doesn't support concurrent BLE connections.`);
+            console.error(`[Main] Only ${connectedDevices.length} device(s) will be available.`);
+          }
         }
       }
     } else {
