@@ -69,7 +69,9 @@ export class BLEManager {
     }
 
     // Find the device by scanning
+    console.log(`[BLE] Scanning for ${config.name} (${config.macAddress})...`);
     const peripherals = await this.scanForDevices(8000);
+    console.log(`[BLE] Found ${peripherals.length} device(s) during scan`);
     let peripheral: Peripheral | undefined;
 
     // Try to find by MAC address first
@@ -138,11 +140,20 @@ export class BLEManager {
     }
 
     if (!peripheral) {
-      console.error(`[BLE] Device ${config.name} (${config.macAddress}) not found`);
-      console.error(`[BLE] Available devices:`, peripherals.map(p => `${p.advertisement.localName || 'Unknown'} (${p.id})`).join(', '));
+      console.error(`[BLE] Device ${config.name} (${config.macAddress}) not found during scan`);
+      console.error(`[BLE] Available devices:`, peripherals.map(p => {
+        const name = p.advertisement.localName || 'Unknown';
+        const address = p.address || 'N/A';
+        const rssi = p.rssi !== undefined ? `${p.rssi} dBm` : 'unknown';
+        return `${name} (${address}, RSSI: ${rssi})`;
+      }).join(', '));
       console.error(`[BLE] Run 'sudo yarn scan' to identify device IDs`);
       return null;
     }
+    
+    // Log successful device discovery
+    const rssi = peripheral.rssi !== undefined ? `${peripheral.rssi} dBm` : 'unknown';
+    console.log(`[BLE] Found ${config.name}: ${peripheral.address || peripheral.id} (RSSI: ${rssi})`);
 
     // Connect with retry logic for Raspberry Pi
     // On Raspberry Pi, BLE connections can be fragile and may need multiple attempts

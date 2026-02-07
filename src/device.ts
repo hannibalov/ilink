@@ -63,8 +63,10 @@ export class ILinkDevice {
         }
         
         const connectPromise = peripheral.connectAsync();
+        // Increased timeout to 60 seconds for Raspberry Pi - BLE connections can take longer
+        // especially when the Bluetooth stack is busy or devices are further away
         const timeoutPromise = new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('Connection timeout after 15 seconds')), 15000)
+          setTimeout(() => reject(new Error('Connection timeout after 60 seconds')), 60000)
         );
         
         await Promise.race([connectPromise, timeoutPromise]);

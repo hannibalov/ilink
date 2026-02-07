@@ -85,8 +85,9 @@ async function main() {
       console.log(`[Main] Connecting to ${deviceConfig.name}...`);
       
       // Add a delay before connecting (except for the first device)
+      // Increased delay to 5 seconds to let Bluetooth stack stabilize after previous connection
       if (i > 0) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
       
       const device = await bleManager.connectDevice(deviceConfig);
