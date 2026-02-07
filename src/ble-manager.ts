@@ -44,7 +44,14 @@ export class BLEManager {
         const id = peripheral.id || peripheral.address;
         if (!foundPeripherals.has(id)) {
           foundPeripherals.set(id, peripheral);
-          console.log(`[BLE] Found device: ${peripheral.advertisement.localName || 'Unknown'} (${id})`);
+          const name = peripheral.advertisement.localName || 'Unknown';
+          const address = peripheral.address || 'N/A';
+          const serviceUuids = peripheral.advertisement.serviceUuids || [];
+          const hasILinkService = serviceUuids.some((uuid: string) => 
+            uuid.toLowerCase().replace(/-/g, '').includes('a032')
+          );
+          const iLinkIndicator = hasILinkService ? ' [iLink?]' : '';
+          console.log(`[BLE] Found device: ${name} (id=${id}, address=${address})${iLinkIndicator}`);
         }
       });
 
@@ -73,13 +80,16 @@ export class BLEManager {
     // First, try to find the device by scanning
     console.log(`[BLE] Looking for device ${config.name} (${config.macAddress})`);
     
-    const peripherals = await this.scanForDevices(5000);
+    // Increase scan duration to give devices more time to advertise
+    const peripherals = await this.scanForDevices(8000);
     let peripheral: Peripheral | undefined;
 
     // Try to find by MAC address first
     // On macOS, peripheral.address is often N/A due to privacy, so we fall back to name matching
     const normalizeMac = (mac: string) => mac.toLowerCase().replace(/[:-]/g, '');
     const targetMac = normalizeMac(config.macAddress);
+    
+    console.log(`[BLE] Target MAC (normalized): ${targetMac}`);
     
     peripheral = peripherals.find(p => {
       // Try address first (actual MAC address - works on Linux)
@@ -92,10 +102,16 @@ export class BLEManager {
       }
       
       // Fallback: try id (might be MAC on some platforms)
+      // Device IDs are often the MAC address without colons
       if (p.id) {
         const normalizedId = normalizeMac(p.id);
         if (normalizedId === targetMac) {
           console.log(`[BLE] Matched by id: ${p.id} (normalized: ${normalizedId})`);
+          return true;
+        }
+        // Also try direct comparison if ID is already normalized
+        if (p.id.toLowerCase() === targetMac) {
+          console.log(`[BLE] Matched by id (direct): ${p.id}`);
           return true;
         }
       }
@@ -168,21 +184,59 @@ export class BLEManager {
         console.log(`[BLE] Found ${iLinkDevices.length} potential iLink device(s) by service UUID`);
         console.log(`[BLE] iLink devices found:`);
         iLinkDevices.forEach((p, idx) => {
-          console.log(`[BLE]   ${idx + 1}. ${p.advertisement.localName || 'Unknown'} (ID: ${p.id})`);
+          const name = p.advertisement.localName || 'Unknown';
+          const address = p.address || 'N/A';
+          console.log(`[BLE]   ${idx + 1}. ${name} (ID: ${p.id}, Address: ${address})`);
         });
-        console.warn(`[BLE] Cannot automatically match device. Please run 'yarn scan' to find device IDs.`);
-        console.warn(`[BLE] Then update your .env DEVICES config to use device IDs instead of MAC addresses for macOS.`);
-        console.warn(`[BLE] Example: "macAddress": "${iLinkDevices[0].id}" (use the device ID as the macAddress value)`);
+        
+        // If we only found one iLink device and it matches the expected pattern, try it
+        // This helps when devices don't advertise their names properly
+        if (iLinkDevices.length === 1) {
+          console.log(`[BLE] Found single iLink device, attempting to use it: ${iLinkDevices[0].id}`);
+          peripheral = iLinkDevices[0];
+        } else {
+          console.warn(`[BLE] Cannot automatically match device. Please run 'yarn scan' to find device IDs.`);
+          console.warn(`[BLE] Then update your .env DEVICES config to use device IDs instead of MAC addresses.`);
+          console.warn(`[BLE] Example: "macAddress": "${iLinkDevices[0].id}" (use the device ID as the macAddress value)`);
+        }
+      } else {
+        // Log all found devices with their IDs and addresses for debugging
+        console.log(`[BLE] No iLink devices found by service UUID. All scanned devices:`);
+        peripherals.forEach((p, idx) => {
+          const name = p.advertisement.localName || 'Unknown';
+          const address = p.address || 'N/A';
+          const serviceUuids = p.advertisement.serviceUuids || [];
+          console.log(`[BLE]   ${idx + 1}. ${name} (ID: ${p.id}, Address: ${address}, Services: ${serviceUuids.join(', ') || 'None'})`);
+        });
       }
     }
 
     if (!peripheral) {
       console.error(`[BLE] Device ${config.name} (${config.macAddress}) not found in scan results`);
+      console.error(`[BLE] Target MAC (normalized): ${targetMac}`);
       console.error(`[BLE] Available devices:`);
-      peripherals.forEach(p => {
-        console.error(`[BLE]   - ${p.advertisement.localName || 'Unknown'}: id=${p.id}, address=${p.address || 'N/A'}`);
+      peripherals.forEach((p, idx) => {
+        const name = p.advertisement.localName || 'Unknown';
+        const address = p.address || 'N/A';
+        const normalizedAddress = address !== 'N/A' ? normalizeMac(address) : 'N/A';
+        const normalizedId = normalizeMac(p.id);
+        const serviceUuids = p.advertisement.serviceUuids || [];
+        const hasILinkService = serviceUuids.some((uuid: string) => 
+          uuid.toLowerCase().replace(/-/g, '').includes('a032')
+        );
+        const iLinkIndicator = hasILinkService ? ' [iLink?]' : '';
+        console.error(`[BLE]   ${idx + 1}. ${name}${iLinkIndicator}`);
+        console.error(`[BLE]      ID: ${p.id} (normalized: ${normalizedId})`);
+        console.error(`[BLE]      Address: ${address} (normalized: ${normalizedAddress})`);
+        if (serviceUuids.length > 0) {
+          console.error(`[BLE]      Services: ${serviceUuids.join(', ')}`);
+        }
       });
-      console.error(`[BLE] Note: On macOS, MAC addresses are not available. Try matching by device name or use the scan script to find device IDs.`);
+      console.error(`[BLE] Troubleshooting:`);
+      console.error(`[BLE]   1. Ensure devices are powered on and in range`);
+      console.error(`[BLE]   2. Run 'sudo yarn scan' to identify device IDs`);
+      console.error(`[BLE]   3. Update .env DEVICES config with correct device IDs`);
+      console.error(`[BLE]   4. On Linux, MAC addresses should match. Check if device IDs match normalized MAC.`);
       return null;
     }
 

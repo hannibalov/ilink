@@ -47,9 +47,9 @@ export class ILinkDevice {
         }
       }
 
-      // Add a delay after connection before service discovery (some devices need this)
-      console.log(`[Device] Waiting 2 seconds before service discovery...`);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Add a longer delay after connection before service discovery (some devices need more time)
+      console.log(`[Device] Waiting 3 seconds before service discovery...`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
       // Verify peripheral is still connected before discovery
       if (!this.peripheral || this.peripheral.state !== 'connected') {
@@ -59,22 +59,59 @@ export class ILinkDevice {
       }
 
       // Discover services and characteristics with timeout
+      // Some devices need a longer timeout, especially on Linux/Raspberry Pi
       console.log(`[Device] Discovering services and characteristics for ${this.config.name}...`);
       console.log(`[Device] Peripheral state before discovery: ${this.peripheral.state}`);
-      const discoverPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
-      const discoverTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Service discovery timeout after 30 seconds')), 30000)
-      );
+      console.log(`[Device] Peripheral ID: ${this.peripheral.id}, Address: ${this.peripheral.address}`);
       
       let characteristics;
-      try {
-        const result = await Promise.race([discoverPromise, discoverTimeout]);
-        characteristics = result.characteristics;
-        this.characteristics = characteristics; // Cache for later use
-        console.log(`[Device] Found ${characteristics.length} characteristics for ${this.config.name}`);
-      } catch (discoverError) {
-        console.error(`[Device] Service discovery failed for ${this.config.name}:`, discoverError);
-        throw discoverError;
+      const maxRetries = 2;
+      let lastError: Error | null = null;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          if (attempt > 1) {
+            console.log(`[Device] Retry attempt ${attempt}/${maxRetries} for service discovery...`);
+            // Verify still connected before retry
+            if (!this.peripheral || this.peripheral.state !== 'connected') {
+              throw new Error('Peripheral disconnected before retry');
+            }
+            // Wait a bit before retry
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+          
+          const discoverPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
+          const discoverTimeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Service discovery timeout after 45 seconds (attempt ${attempt}/${maxRetries})`)), 45000)
+          );
+          
+          const result = await Promise.race([discoverPromise, discoverTimeout]);
+          characteristics = result.characteristics;
+          this.characteristics = characteristics; // Cache for later use
+          console.log(`[Device] Found ${characteristics.length} characteristics for ${this.config.name}`);
+          
+          // Success - break out of retry loop
+          break;
+        } catch (discoverError) {
+          lastError = discoverError instanceof Error ? discoverError : new Error(String(discoverError));
+          console.error(`[Device] Service discovery attempt ${attempt} failed for ${this.config.name}:`, lastError.message);
+          
+          // Check if peripheral is still connected
+          if (this.peripheral && this.peripheral.state !== 'connected') {
+            console.error(`[Device] Peripheral disconnected during discovery attempt ${attempt}`);
+            throw new Error(`Peripheral disconnected during service discovery: ${lastError.message}`);
+          }
+          
+          // If this was the last attempt, throw the error
+          if (attempt === maxRetries) {
+            console.error(`[Device] All ${maxRetries} service discovery attempts failed for ${this.config.name}`);
+            throw lastError;
+          }
+        }
+      }
+      
+      if (!characteristics) {
+        throw new Error('Service discovery failed: no characteristics found after retries');
       }
       
       // Find the target characteristic (default: a040)
