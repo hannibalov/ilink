@@ -189,8 +189,8 @@ describe('MQTTBridge', () => {
       const payload = JSON.stringify({ state: 'ON' });
 
       // Simulate message event
-      const messageHandler = mockMqttClient.on.mock.calls.find(
-        (call: [string, Function]) => call[0] === 'message'
+      const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
+        (call) => call[0] === 'message'
       )?.[1];
 
       if (messageHandler) {
@@ -204,8 +204,8 @@ describe('MQTTBridge', () => {
       const topic = 'ilink/test-device/set';
       const payload = JSON.stringify({ state: 'OFF' });
 
-      const messageHandler = mockMqttClient.on.mock.calls.find(
-        (call: [string, Function]) => call[0] === 'message'
+      const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
+        (call) => call[0] === 'message'
       )?.[1];
 
       if (messageHandler) {
@@ -219,8 +219,8 @@ describe('MQTTBridge', () => {
       const topic = 'ilink/test-device/set';
       const payload = JSON.stringify({ brightness: 128 });
 
-      const messageHandler = mockMqttClient.on.mock.calls.find(
-        (call: [string, Function]) => call[0] === 'message'
+      const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
+        (call) => call[0] === 'message'
       )?.[1];
 
       if (messageHandler) {
@@ -234,8 +234,8 @@ describe('MQTTBridge', () => {
       const topic = 'ilink/test-device/set';
       const payload = JSON.stringify({ color: { r: 255, g: 0, b: 0 } });
 
-      const messageHandler = mockMqttClient.on.mock.calls.find(
-        (call: [string, Function]) => call[0] === 'message'
+      const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
+        (call) => call[0] === 'message'
       )?.[1];
 
       if (messageHandler) {
@@ -255,8 +255,8 @@ describe('MQTTBridge', () => {
         color: { r: 255, g: 128, b: 0 },
       });
 
-      const messageHandler = mockMqttClient.on.mock.calls.find(
-        (call: [string, Function]) => call[0] === 'message'
+      const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
+        (call) => call[0] === 'message'
       )?.[1];
 
       if (messageHandler) {
@@ -274,8 +274,8 @@ describe('MQTTBridge', () => {
       const topic = 'ilink/unknown-device/set';
       const payload = JSON.stringify({ state: 'ON' });
 
-      const messageHandler = mockMqttClient.on.mock.calls.find(
-        (call: [string, Function]) => call[0] === 'message'
+      const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
+        (call) => call[0] === 'message'
       )?.[1];
 
       if (messageHandler) {
@@ -290,8 +290,8 @@ describe('MQTTBridge', () => {
       const topic = 'invalid/topic';
       const payload = JSON.stringify({ state: 'ON' });
 
-      const messageHandler = mockMqttClient.on.mock.calls.find(
-        (call: [string, Function]) => call[0] === 'message'
+      const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
+        (call) => call[0] === 'message'
       )?.[1];
 
       if (messageHandler) {
@@ -305,8 +305,8 @@ describe('MQTTBridge', () => {
       const topic = 'ilink/test-device/set';
       const payload = 'invalid json';
 
-      const messageHandler = mockMqttClient.on.mock.calls.find(
-        (call: [string, Function]) => call[0] === 'message'
+      const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
+        (call) => call[0] === 'message'
       )?.[1];
 
       if (messageHandler) {

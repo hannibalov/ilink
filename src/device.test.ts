@@ -172,7 +172,7 @@ describe('ILinkDevice', () => {
 
       expect(result).toBe(true);
       expect(mockCharacteristic.writeAsync).toHaveBeenCalled();
-      const writtenBuffer = mockCharacteristic.writeAsync.mock.calls[0][0] as Buffer;
+      const writtenBuffer = (mockCharacteristic.writeAsync as ReturnType<typeof vi.fn>).mock.calls[0][0] as Buffer;
       expect(writtenBuffer.toString('hex')).toBe('55aa01080501f1');
     });
 
@@ -184,7 +184,7 @@ describe('ILinkDevice', () => {
       const result = await device.sendCommand(command);
 
       expect(result).toBe(true);
-      const writtenBuffer = mockCharacteristic.writeAsync.mock.calls[0][0] as Buffer;
+      const writtenBuffer = (mockCharacteristic.writeAsync as ReturnType<typeof vi.fn>).mock.calls[0][0] as Buffer;
       expect(writtenBuffer.toString('hex')).toBe('55aa01080500f2');
     });
 
@@ -198,7 +198,7 @@ describe('ILinkDevice', () => {
       const result = await device.sendCommand(command);
 
       expect(result).toBe(true);
-      const writtenBuffer = mockCharacteristic.writeAsync.mock.calls[0][0] as Buffer;
+      const writtenBuffer = (mockCharacteristic.writeAsync as ReturnType<typeof vi.fn>).mock.calls[0][0] as Buffer;
       expect(writtenBuffer.toString('hex')).toBe('55aa030802ff0000f4');
       expect(stateUpdateCallback).toHaveBeenCalledWith(
         expect.objectContaining({
