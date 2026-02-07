@@ -5,6 +5,7 @@ import { ILinkDevice } from './device';
 export class BLEManager {
   private devices = new Map<string, ILinkDevice>();
   private peripherals = new Map<string, Peripheral>();
+  private deviceConfigs = new Map<string, DeviceConfig>();
   private isScanning = false;
 
   constructor(private onDeviceStateUpdate: (deviceId: string, state: any) => void) { }
@@ -59,6 +60,34 @@ export class BLEManager {
   }
 
   async connectDevice(config: DeviceConfig): Promise<ILinkDevice | null> {
+    // CRITICAL FIX FOR RASPBERRY PI: Many Bluetooth adapters cannot scan while connected to BLE devices
+    // We need to temporarily disconnect existing connections before scanning for new devices
+    // Store device configs for reconnection later
+    const existingConnections = Array.from(this.devices.entries());
+    const tempDisconnected: Array<{id: string, deviceConfig: DeviceConfig, device: ILinkDevice}> = [];
+    
+    if (existingConnections.length > 0) {
+      console.log(`[BLE] Temporarily disconnecting ${existingConnections.length} device(s) to allow scanning for ${config.name}...`);
+      // Store device configs before disconnecting (we'll need them for reconnection)
+      for (const [deviceId, device] of existingConnections) {
+        if (device.isConnected()) {
+          // Get the device config - we'll need it for reconnection
+          const deviceConfig = this.deviceConfigs.get(deviceId);
+          if (deviceConfig) {
+            try {
+              await device.disconnect();
+              tempDisconnected.push({id: deviceId, deviceConfig, device});
+              console.log(`[BLE] Temporarily disconnected ${deviceId}`);
+            } catch (error) {
+              console.warn(`[BLE] Error disconnecting ${deviceId}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
+        }
+      }
+      // Wait for disconnections to complete
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
     // Stop scanning if active (required by noble before connecting)
     if (this.isScanning) {
       console.log(`[BLE] Stopping scan before connecting to ${config.name}...`);
@@ -233,7 +262,61 @@ export class BLEManager {
         const connected = await device.connect(peripheral);
         if (connected) {
           this.devices.set(config.id, device);
+          this.deviceConfigs.set(config.id, config);
           console.log(`[BLE] Successfully connected to ${config.name} on attempt ${attempt}`);
+          
+          // Reconnect temporarily disconnected devices
+          if (tempDisconnected.length > 0) {
+            console.log(`[BLE] Reconnecting ${tempDisconnected.length} temporarily disconnected device(s)...`);
+            for (const {id, deviceConfig: tempConfig, device: tempDevice} of tempDisconnected) {
+              try {
+                // Need to re-scan to get a fresh peripheral reference for reconnection
+                console.log(`[BLE] Scanning to reconnect ${tempConfig.name}...`);
+                const reconnectPeripherals = await this.scanForDevices(8000);
+                const normalizeMac = (mac: string) => mac.toLowerCase().replace(/[:-]/g, '');
+                const targetMac = normalizeMac(tempConfig.macAddress);
+                
+                let reconnectPeripheral = reconnectPeripherals.find(p => {
+                  if (p.address && p.address !== 'N/A') {
+                    const normalizedAddress = normalizeMac(p.address);
+                    if (normalizedAddress === targetMac) return true;
+                  }
+                  if (p.id) {
+                    const normalizedId = normalizeMac(p.id);
+                    if (normalizedId === targetMac || p.id.toLowerCase() === targetMac) return true;
+                  }
+                  return false;
+                });
+                
+                if (!reconnectPeripheral) {
+                  // Try by name
+                  reconnectPeripheral = reconnectPeripherals.find(p => {
+                    const localName = p.advertisement.localName || '';
+                    return localName.toLowerCase() === tempConfig.name.toLowerCase();
+                  });
+                }
+                
+                if (reconnectPeripheral) {
+                  console.log(`[BLE] Reconnecting ${tempConfig.name}...`);
+                  this.peripherals.set(id, reconnectPeripheral);
+                  await tempDevice.connect(reconnectPeripheral);
+                  this.devices.set(id, tempDevice);
+                  console.log(`[BLE] Successfully reconnected ${tempConfig.name}`);
+                  // Small delay between reconnections
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+                } else {
+                  console.error(`[BLE] Could not find ${tempConfig.name} during reconnection scan`);
+                }
+              } catch (reconnectError) {
+                console.error(`[BLE] Failed to reconnect ${tempConfig.name}: ${reconnectError instanceof Error ? reconnectError.message : String(reconnectError)}`);
+                // Remove from devices map if reconnection failed
+                this.devices.delete(id);
+                this.peripherals.delete(id);
+                this.deviceConfigs.delete(id);
+              }
+            }
+          }
+          
           return device;
         } else {
           // Connection failed - will retry if attempts remain
@@ -275,6 +358,7 @@ export class BLEManager {
       await device.disconnect();
       this.devices.delete(deviceId);
       this.peripherals.delete(deviceId);
+      this.deviceConfigs.delete(deviceId);
     }
   }
 
@@ -288,5 +372,6 @@ export class BLEManager {
     }
     this.devices.clear();
     this.peripherals.clear();
+    this.deviceConfigs.clear();
   }
 }
