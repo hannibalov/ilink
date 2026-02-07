@@ -244,31 +244,12 @@ export class BLEManager {
     // Log successful device discovery
     const rssi = targetPeripheral.rssi !== undefined ? `${targetPeripheral.rssi} dBm` : 'unknown';
     console.log(`[BLE] Using peripheral for ${config.name}: ${targetPeripheral.address || targetPeripheral.id} (RSSI: ${rssi})`);
-    
-    let peripheral: Peripheral = targetPeripheral;
-      console.error(`[BLE] Device ${config.name} (${config.macAddress}) not found`);
-      if (typeof peripherals !== 'undefined') {
-        console.error(`[BLE] Available devices:`, peripherals.map(p => {
-          const name = p.advertisement.localName || 'Unknown';
-          const address = p.address || 'N/A';
-          const rssi = p.rssi !== undefined ? `${p.rssi} dBm` : 'unknown';
-          return `${name} (${address}, RSSI: ${rssi})`;
-        }).join(', '));
-      }
-      console.error(`[BLE] Run 'sudo yarn scan' to identify device IDs`);
-      return null;
-    }
-    
-    // Log successful device discovery
-    const rssi = targetPeripheral.rssi !== undefined ? `${targetPeripheral.rssi} dBm` : 'unknown';
-    console.log(`[BLE] Using peripheral for ${config.name}: ${targetPeripheral.address || targetPeripheral.id} (RSSI: ${rssi})`);
-    
-    let peripheral: Peripheral = targetPeripheral;
 
     // Connect with retry logic for Raspberry Pi
     // On Raspberry Pi, BLE connections can be fragile and may need multiple attempts
     const maxConnectionAttempts = 3;
     let device: ILinkDevice | null = null;
+    let currentPeripheral: Peripheral = targetPeripheral;
     
     for (let attempt = 1; attempt <= maxConnectionAttempts; attempt++) {
       try {
@@ -328,13 +309,14 @@ export class BLEManager {
           }
           
           targetPeripheral = freshPeripheral; // Update targetPeripheral for retries
+          currentPeripheral = freshPeripheral;
+        } else {
+          // First attempt - use the peripheral from parameter or scan
+          currentPeripheral = targetPeripheral;
         }
         
-        // Use the current peripheral (either from parameter or retry)
-        peripheral = targetPeripheral!;
-        
         // Store peripheral reference to prevent garbage collection
-        this.peripherals.set(config.id, peripheral);
+        this.peripherals.set(config.id, currentPeripheral);
 
         // Create device instance (or recreate for retries)
         if (!device) {
@@ -343,7 +325,7 @@ export class BLEManager {
           });
         }
         
-        const connected = await device.connect(peripheral);
+        const connected = await device.connect(currentPeripheral);
         if (connected) {
           this.devices.set(config.id, device);
           this.deviceConfigs.set(config.id, config);
