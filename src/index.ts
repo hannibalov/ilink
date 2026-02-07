@@ -76,6 +76,13 @@ async function main() {
     await bleManager.initialize();
     console.log('[Main] BLE manager initialized');
 
+    // CRITICAL FIX: Scan for all devices FIRST, then connect sequentially
+    // Raspberry Pi Bluetooth adapters cannot scan while connected to BLE devices
+    // By scanning upfront, we avoid the need to scan during connection
+    console.log('[Main] Scanning for all configured devices...');
+    const scannedPeripherals = await bleManager.scanForAllDevices(config.devices);
+    console.log(`[Main] Found ${scannedPeripherals.size} of ${config.devices.length} device(s) during scan`);
+
     // Connect to all configured devices sequentially with delays
     // This prevents overwhelming the Bluetooth stack on Raspberry Pi
     const connectedDevices: ILinkDevice[] = [];
@@ -84,13 +91,20 @@ async function main() {
       const deviceConfig = config.devices[i];
       console.log(`[Main] Connecting to ${deviceConfig.name}...`);
       
+      // Get the peripheral from the upfront scan
+      const peripheral = scannedPeripherals.get(deviceConfig.id);
+      if (!peripheral) {
+        console.error(`[Main] Peripheral not found for ${deviceConfig.name} - skipping`);
+        continue;
+      }
+      
       // Add a delay before connecting (except for the first device)
       // Increased delay to 5 seconds to let Bluetooth stack stabilize after previous connection
       if (i > 0) {
         await new Promise(resolve => setTimeout(resolve, 5000));
       }
       
-      const device = await bleManager.connectDevice(deviceConfig);
+      const device = await bleManager.connectDevice(deviceConfig, peripheral);
       
       if (device) {
         mqttBridge.registerDevice(device, deviceConfig);
