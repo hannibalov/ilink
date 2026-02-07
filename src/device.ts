@@ -84,15 +84,54 @@ export class ILinkDevice {
             throw new Error('Peripheral not connected before discovery');
           }
           
-          // On Linux, service discovery can hang. Use a shorter timeout and let it fail fast
-          // Then retry - this seems to work better than one long timeout
-          const discoverPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
-          const discoverTimeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Service discovery timeout after ${discoveryTimeout / 1000} seconds (attempt ${attempt}/${maxRetries})`)), discoveryTimeout)
-          );
+          // On Linux, discoverAllServicesAndCharacteristicsAsync() hangs indefinitely
+          // Use the callback-based two-step approach from peripheral-explorer.js:
+          // 1. Discover services first (callback-based, more reliable on Linux)
+          // 2. Then discover characteristics for each service
+          const services = await new Promise<any[]>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error(`Service discovery timeout after ${discoveryTimeout / 1000} seconds`));
+            }, discoveryTimeout);
+            
+            // Use callback-based discoverServices - more reliable on Linux
+            this.peripheral!.discoverServices([], (error: string | null, discoveredServices: any[]) => {
+              clearTimeout(timeout);
+              if (error) {
+                reject(new Error(`Service discovery failed: ${error}`));
+              } else {
+                resolve(discoveredServices || []);
+              }
+            });
+          });
           
-          const result = await Promise.race([discoverPromise, discoverTimeoutPromise]);
-          const allCharacteristics = result.characteristics || [];
+          console.log(`[Device] Found ${services.length} service(s), discovering characteristics...`);
+          
+          // Discover characteristics for all services (we'll filter later)
+          const allCharacteristics: Characteristic[] = [];
+          
+          for (const service of services) {
+            try {
+              const serviceChars = await new Promise<Characteristic[]>((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                  reject(new Error(`Characteristic discovery timeout for service ${service.uuid}`));
+                }, discoveryTimeout);
+                
+                service.discoverCharacteristics([], (error: string | null, chars: Characteristic[]) => {
+                  clearTimeout(timeout);
+                  if (error) {
+                    reject(new Error(`Characteristic discovery failed: ${error}`));
+                  } else {
+                    resolve(chars || []);
+                  }
+                });
+              });
+              
+              allCharacteristics.push(...serviceChars);
+            } catch (charError) {
+              console.warn(`[Device] Failed to discover characteristics for service ${service.uuid}:`, charError instanceof Error ? charError.message : String(charError));
+              // Continue with other services
+            }
+          }
           
           // Filter for the characteristics we need (a040 and a042)
           const normalizedTargetChar = targetCharUuid.toLowerCase().replace(/-/g, '');
