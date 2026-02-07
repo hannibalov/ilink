@@ -87,8 +87,8 @@ export class ILinkDevice {
       const maxRetries = 3;
       let lastError: Error | null = null;
       
-      // Shorter timeout since we're only discovering specific services
-      const discoveryTimeout = 10000; // 10 seconds should be plenty for specific service discovery
+      // Timeout for service discovery on Linux - discovering all services can take time
+      const discoveryTimeout = 20000; // 20 seconds for full service discovery on Linux
       
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -112,27 +112,36 @@ export class ILinkDevice {
             }
           }
           
-          // Discover only the iLink service and the characteristics we need
-          // This is much faster than discovering all services, especially on Linux
-          console.log(`[Device] Discovering specific service ${iLinkServiceUuid} and characteristics [${targetCharUuid}, ${statusCharUuid}]...`);
-          const discoverPromise = this.peripheral.discoverSomeServicesAndCharacteristicsAsync(
-            [iLinkServiceUuid],  // Only discover iLink service
-            [targetCharUuid, statusCharUuid]  // Only discover the characteristics we need
-          );
+          // On Linux, discoverSomeServicesAndCharacteristicsAsync can cause disconnections
+          // So we use discoverAllServicesAndCharacteristicsAsync and filter for what we need
+          // This is more reliable even if slightly slower
+          console.log(`[Device] Discovering all services and characteristics (will filter for iLink)...`);
+          const discoverPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
           const discoverTimeoutPromise = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Service discovery timeout after ${discoveryTimeout / 1000} seconds (attempt ${attempt}/${maxRetries})`)), discoveryTimeout)
           );
           
           const result = await Promise.race([discoverPromise, discoverTimeoutPromise]);
-          characteristics = result.characteristics || [];
+          const allCharacteristics = result.characteristics || [];
+          
+          // Filter for the characteristics we need (a040 and a042)
+          const normalizedTargetChar = targetCharUuid.toLowerCase().replace(/-/g, '');
+          const normalizedStatusChar = statusCharUuid.toLowerCase().replace(/-/g, '');
+          
+          characteristics = allCharacteristics.filter(c => {
+            const uuid = c.uuid.toLowerCase().replace(/-/g, '');
+            return uuid === normalizedTargetChar || uuid === normalizedStatusChar || uuid === targetCharUuid || uuid === statusCharUuid;
+          });
+          
           this.characteristics = characteristics; // Cache for later use
-          console.log(`[Device] Found ${characteristics.length} characteristics for ${this.config.name}`);
+          console.log(`[Device] Found ${allCharacteristics.length} total characteristics, ${characteristics.length} iLink characteristics (${targetCharUuid}, ${statusCharUuid}) for ${this.config.name}`);
           
           if (characteristics.length > 0) {
             // Success - break out of retry loop
             break;
           } else {
-            throw new Error('No characteristics found');
+            console.warn(`[Device] iLink characteristics not found. Available characteristics:`, allCharacteristics.map(c => c.uuid));
+            throw new Error(`No iLink characteristics found (looking for ${targetCharUuid}, ${statusCharUuid})`);
           }
         } catch (discoverError) {
           lastError = discoverError instanceof Error ? discoverError : new Error(String(discoverError));
