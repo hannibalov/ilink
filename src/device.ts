@@ -24,46 +24,26 @@ export class ILinkDevice {
       // Store peripheral reference immediately
       this.peripheral = peripheral;
       
-      console.log(`[Device] Attempting to connect to ${this.config.name}...`);
-      console.log(`[Device] Peripheral ID: ${peripheral.id}, Address: ${peripheral.address}, State: ${peripheral.state}`);
-      
       // Check if already connected
-      if (peripheral.state === 'connected') {
-        console.log(`[Device] ${this.config.name} is already connected`);
-      } else {
-        // Connect to peripheral with timeout
-        console.log(`[Device] Current peripheral state: ${peripheral.state}`);
+      if (peripheral.state !== 'connected') {
         const connectPromise = peripheral.connectAsync();
         const timeoutPromise = new Promise<never>((_, reject) => 
           setTimeout(() => reject(new Error('Connection timeout after 15 seconds')), 15000)
         );
         
-        try {
-          await Promise.race([connectPromise, timeoutPromise]);
-          console.log(`[Device] Bluetooth connection established for ${this.config.name}`);
-        } catch (timeoutError) {
-          console.error(`[Device] Connection timeout for ${this.config.name}`);
-          throw timeoutError;
-        }
+        await Promise.race([connectPromise, timeoutPromise]);
       }
 
       // Set up disconnect handler immediately to catch early disconnections
       let disconnected = false;
       const disconnectHandler = () => {
-        console.warn(`[Device] ${this.config.name} disconnected unexpectedly`);
         disconnected = true;
       };
       this.peripheral.once('disconnect', disconnectHandler);
 
-      // Start service discovery immediately - some devices disconnect if we wait
-      // The connection is already established, so we can proceed right away
-      console.log(`[Device] Connection established, starting service discovery immediately...`);
-      
       // Quick check to ensure we're still connected
       if (disconnected || !this.peripheral || this.peripheral.state !== 'connected') {
         this.peripheral?.removeListener('disconnect', disconnectHandler);
-        console.error(`[Device] Peripheral disconnected immediately after connection for ${this.config.name}`);
-        console.error(`[Device] Peripheral state: ${this.peripheral?.state || 'null'}, disconnected flag: ${disconnected}`);
         throw new Error('Peripheral disconnected immediately after connection');
       }
 
@@ -72,16 +52,12 @@ export class ILinkDevice {
         this.peripheral.removeListener('disconnect', disconnectHandler);
       }
 
-      // Discover only the iLink service and characteristics we need
-      // This is much faster and more reliable than discovering all services
+      // Discover services and characteristics
       const iLinkServiceUuid = 'a032';
       const targetCharUuid = this.config.targetChar || 'a040';
       const statusCharUuid = this.config.statusChar || 'a042';
       
-      console.log(`[Device] Discovering iLink service (${iLinkServiceUuid}) and characteristics for ${this.config.name}...`);
-      console.log(`[Device] Looking for characteristics: ${targetCharUuid} (target), ${statusCharUuid} (status)`);
-      console.log(`[Device] Peripheral state before discovery: ${this.peripheral.state}`);
-      console.log(`[Device] Peripheral ID: ${this.peripheral.id}, Address: ${this.peripheral.address}`);
+      console.log(`[Device] Discovering services and characteristics for ${this.config.name}...`);
       
       let characteristics: Characteristic[] = [];
       const maxRetries = 3;
@@ -96,26 +72,25 @@ export class ILinkDevice {
             console.log(`[Device] Retry attempt ${attempt}/${maxRetries} for service discovery...`);
             // Verify still connected before retry
             if (!this.peripheral || this.peripheral.state !== 'connected') {
-              console.error(`[Device] Peripheral disconnected before retry, attempting reconnect...`);
               // Try to reconnect
               try {
                 await this.peripheral.connectAsync();
-                console.log(`[Device] Reconnected successfully`);
-                // Wait a moment after reconnect
                 await new Promise(resolve => setTimeout(resolve, 1000));
               } catch (reconnectError) {
                 throw new Error(`Reconnection failed: ${reconnectError instanceof Error ? reconnectError.message : String(reconnectError)}`);
               }
             } else {
-              // Wait a bit before retry
               await new Promise(resolve => setTimeout(resolve, 1000));
             }
           }
           
-          // On Linux, discoverSomeServicesAndCharacteristicsAsync can cause disconnections
-          // So we use discoverAllServicesAndCharacteristicsAsync and filter for what we need
-          // This is more reliable even if slightly slower
-          console.log(`[Device] Discovering all services and characteristics (will filter for iLink)...`);
+          // Verify connection before starting discovery
+          if (!this.peripheral || this.peripheral.state !== 'connected') {
+            throw new Error('Peripheral not connected before discovery');
+          }
+          
+          // Use discoverAllServicesAndCharacteristicsAsync with timeout
+          // This is the standard approach used by many working projects
           const discoverPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
           const discoverTimeoutPromise = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Service discovery timeout after ${discoveryTimeout / 1000} seconds (attempt ${attempt}/${maxRetries})`)), discoveryTimeout)
@@ -134,48 +109,30 @@ export class ILinkDevice {
           });
           
           this.characteristics = characteristics; // Cache for later use
-          console.log(`[Device] Found ${allCharacteristics.length} total characteristics, ${characteristics.length} iLink characteristics (${targetCharUuid}, ${statusCharUuid}) for ${this.config.name}`);
           
           if (characteristics.length > 0) {
+            console.log(`[Device] Found ${characteristics.length} iLink characteristics for ${this.config.name}`);
             // Success - break out of retry loop
             break;
           } else {
-            console.warn(`[Device] iLink characteristics not found. Available characteristics:`, allCharacteristics.map(c => c.uuid));
+            console.warn(`[Device] iLink characteristics not found. Available:`, allCharacteristics.map(c => c.uuid));
             throw new Error(`No iLink characteristics found (looking for ${targetCharUuid}, ${statusCharUuid})`);
           }
         } catch (discoverError) {
           lastError = discoverError instanceof Error ? discoverError : new Error(String(discoverError));
-          console.error(`[Device] Service discovery attempt ${attempt} failed for ${this.config.name}:`, lastError.message);
+          console.error(`[Device] Service discovery attempt ${attempt} failed: ${lastError.message}`);
           
           // Check if peripheral is still connected
           if (this.peripheral && this.peripheral.state !== 'connected') {
-            console.error(`[Device] Peripheral disconnected during discovery attempt ${attempt}`);
-            // Don't throw immediately - try to reconnect on next attempt
-            if (attempt < maxRetries) {
-              console.log(`[Device] Will attempt reconnection on next retry...`);
-            } else {
+            if (attempt === maxRetries) {
               throw new Error(`Peripheral disconnected during service discovery: ${lastError.message}`);
             }
           }
           
-          // If this was the last attempt, try fallback to full discovery
+          // If this was the last attempt, provide helpful error message
           if (attempt === maxRetries) {
-            console.warn(`[Device] Specific service discovery failed, trying fallback to full discovery...`);
-            try {
-              const fallbackPromise = this.peripheral.discoverAllServicesAndCharacteristicsAsync();
-              const fallbackTimeout = new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Fallback discovery timeout')), 20000)
-              );
-              const fallbackResult = await Promise.race([fallbackPromise, fallbackTimeout]);
-              characteristics = fallbackResult.characteristics || [];
-              this.characteristics = characteristics;
-              console.log(`[Device] Fallback discovery found ${characteristics.length} characteristics`);
-              if (characteristics.length > 0) {
-                break; // Success with fallback
-              }
-            } catch (fallbackError) {
-              console.error(`[Device] Fallback discovery also failed:`, fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
-            }
+            console.error(`[Device] All ${maxRetries} service discovery attempts failed`);
+            console.error(`[Device] Troubleshooting: Check for multiple HCI devices (sudo ./scripts/check-bluetooth.sh)`);
             throw lastError;
           }
         }
@@ -185,23 +142,18 @@ export class ILinkDevice {
         throw new Error('Service discovery failed: no characteristics found after retries');
       }
       
-      // Find the target characteristic (we already have the UUIDs from above)
+      // Find the target characteristic
       const normalizedTargetChar = targetCharUuid.toLowerCase().replace(/-/g, '');
-      
-      console.log(`[Device] Looking for characteristic ${targetCharUuid} (normalized: ${normalizedTargetChar})`);
       const char = characteristics.find(c => {
         const uuid = c.uuid.toLowerCase().replace(/-/g, '');
         return uuid === normalizedTargetChar || uuid === targetCharUuid;
       });
 
       if (!char) {
-        console.error(`[Device] Characteristic ${targetCharUuid} not found for ${this.config.name}`);
-        console.log(`[Device] Available characteristics:`, characteristics.map(c => c.uuid));
+        console.error(`[Device] Characteristic ${targetCharUuid} not found. Available:`, characteristics.map(c => c.uuid));
         await this.peripheral!.disconnectAsync();
         return false;
       }
-
-      console.log(`[Device] Found characteristic ${targetCharUuid} for ${this.config.name}`);
 
       this.characteristic = char;
 
@@ -214,9 +166,8 @@ export class ILinkDevice {
 
       if (statusChar && statusChar.properties?.includes('read')) {
         this.statusCharacteristic = statusChar;
-        console.log(`[Device] Found status characteristic ${statusCharUuid} for ${this.config.name}`);
       } else {
-        console.warn(`[Device] Status characteristic ${statusCharUuid} not found or not readable for ${this.config.name}`);
+        console.warn(`[Device] Status characteristic ${statusCharUuid} not available for ${this.config.name}`);
       }
 
       this.reconnectAttempts = 0;
@@ -230,23 +181,16 @@ export class ILinkDevice {
       });
 
       // Try to read initial state
-      console.log(`[Device] Reading initial state for ${this.config.name}...`);
       try {
         await this.readState();
-        console.log(`[Device] Initial state read completed for ${this.config.name}`);
       } catch (readError) {
-        console.warn(`[Device] Failed to read initial state for ${this.config.name}, but continuing:`, readError);
         // Don't fail the connection if state read fails
       }
 
-      console.log(`[Device] Successfully connected to ${this.config.name} (${this.config.id})`);
+      console.log(`[Device] Successfully connected to ${this.config.name}`);
       return true;
     } catch (error) {
-      console.error(`[Device] Failed to connect to ${this.config.name}:`, error);
-      if (error instanceof Error) {
-        console.error(`[Device] Error details: ${error.message}`);
-        console.error(`[Device] Stack: ${error.stack}`);
-      }
+      console.error(`[Device] Failed to connect to ${this.config.name}:`, error instanceof Error ? error.message : String(error));
       // Try to disconnect if connection was partially established
       try {
         if (this.peripheral) {
@@ -318,8 +262,6 @@ export class ILinkDevice {
 
       await this.characteristic.writeAsync(buffer, withoutResponse);
       
-      console.log(`[Device] Sent command to ${this.config.name}: ${hexCommand}`);
-      
       // Update state and notify
       this.onStateUpdate({ ...this.state });
 
@@ -331,13 +273,7 @@ export class ILinkDevice {
   }
 
   async readState(): Promise<LightState | null> {
-    if (!this.statusCharacteristic) {
-      console.log(`[Device] No status characteristic available for ${this.config.name}`);
-      return null;
-    }
-
-    if (!this.peripheral || this.peripheral.state !== 'connected') {
-      console.warn(`[Device] Cannot read state - ${this.config.name} not connected`);
+    if (!this.statusCharacteristic || !this.peripheral || this.peripheral.state !== 'connected') {
       return null;
     }
 
@@ -378,12 +314,9 @@ export class ILinkDevice {
     this.reconnectAttempts++;
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000); // Exponential backoff, max 30s
 
-    console.log(`[Device] Attempting to reconnect ${this.config.name} in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-
     setTimeout(async () => {
       // Reconnection logic would need access to the BLE manager
-      // For now, we'll just log - the manager should handle reconnection
-      console.log(`[Device] Reconnection attempt ${this.reconnectAttempts} for ${this.config.name}`);
+      // The manager should handle reconnection
     }, delay);
   }
 }

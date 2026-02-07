@@ -82,12 +82,10 @@ async function main() {
 
     for (let i = 0; i < config.devices.length; i++) {
       const deviceConfig = config.devices[i];
-      console.log(`[Main] Connecting to ${deviceConfig.name} (${i + 1}/${config.devices.length})...`);
+      console.log(`[Main] Connecting to ${deviceConfig.name}...`);
       
       // Add a delay before connecting (except for the first device)
-      // This gives the Bluetooth stack time to stabilize between connections
       if (i > 0) {
-        console.log(`[Main] Waiting 2 seconds before connecting next device...`);
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
@@ -96,7 +94,6 @@ async function main() {
       if (device) {
         mqttBridge.registerDevice(device, deviceConfig);
         connectedDevices.push(device);
-        console.log(`[Main] Successfully connected to ${deviceConfig.name}`);
         
         // Publish initial state
         const initialState = device.getState();
@@ -106,7 +103,6 @@ async function main() {
         await new Promise(resolve => setTimeout(resolve, 1000));
       } else {
         console.error(`[Main] Failed to connect to ${deviceConfig.name}`);
-        // Still wait a bit even on failure to avoid rapid retries
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
