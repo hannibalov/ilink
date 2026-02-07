@@ -58,14 +58,14 @@ echo "✓ BlueZ configuration updated"
 # Disable Bluetooth power management
 echo ""
 echo "Disabling Bluetooth power management..."
-hciconfig hci0 up
-hciconfig hci0 noscan
-# Disable power saving mode
-hciconfig hci0 noleadv
-# Set adapter to be always on
-hciconfig hci0 piscan || true  # Enable page/ inquiry scan
+hciconfig hci0 up || echo "⚠️  Warning: Could not power on hci0"
+hciconfig hci0 noscan || echo "⚠️  Warning: Could not disable scan mode (may not be supported)"
+# Disable power saving mode (may not be supported on all adapters)
+hciconfig hci0 noleadv 2>/dev/null || echo "⚠️  Info: noleadv not supported on this adapter (non-critical)"
+# Set adapter to be always on (may not be supported on all adapters)
+hciconfig hci0 piscan 2>/dev/null || echo "⚠️  Info: piscan not supported on this adapter (non-critical)"
 
-echo "✓ Power management disabled"
+echo "✓ Power management configuration attempted"
 
 # Optimize CPU governor for better BLE performance
 echo ""
