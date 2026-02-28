@@ -1,11 +1,13 @@
 import mqtt, { MqttClient } from 'mqtt';
-import { DeviceConfig, MQTTCommand, MQTTState, LightState } from './types';
-import { ILinkDevice } from './device';
+import { MQTTCommand, MQTTState, LightState } from './types';
+
+/** Called when an MQTT command is received. Implementor should run BLE in queue and publish state. */
+export type CommandHandler = (deviceId: string, command: MQTTCommand) => Promise<void>;
 
 export class MQTTBridge {
   private client: MqttClient | null = null;
-  private devices = new Map<string, ILinkDevice>();
   private baseTopic: string;
+  private commandHandler: CommandHandler | null = null;
 
   constructor(
     private brokerUrl: string,
@@ -17,6 +19,10 @@ export class MQTTBridge {
     baseTopic: string = 'ilink'
   ) {
     this.baseTopic = baseTopic;
+  }
+
+  setCommandHandler(handler: CommandHandler): void {
+    this.commandHandler = handler;
   }
 
   connect(): Promise<void> {
@@ -74,32 +80,24 @@ export class MQTTBridge {
   }
 
   private handleMessage(topic: string, payload: string): void {
-    // Topic format: ilink/{deviceId}/set
     const match = topic.match(new RegExp(`^${this.baseTopic.replace(/\+/g, '\\+')}/([^/]+)/set$`));
-    if (!match) {
-      return;
-    }
+    if (!match) return;
 
     const deviceId = match[1];
-    const device = this.devices.get(deviceId);
-
-    if (!device) {
-      console.warn(`[MQTT] Device ${deviceId} not found`);
+    if (!this.commandHandler) {
+      console.warn(`[MQTT] No command handler set; ignoring command for ${deviceId}`);
       return;
     }
 
     try {
       const command: MQTTCommand = JSON.parse(payload);
       console.log(`[MQTT] Received command for ${deviceId}:`, command);
-      device.sendCommand(command);
+      this.commandHandler(deviceId, command).catch((err) => {
+        console.error(`[MQTT] Command failed for ${deviceId}:`, err);
+      });
     } catch (error) {
       console.error(`[MQTT] Failed to parse command for ${deviceId}:`, error);
     }
-  }
-
-  registerDevice(device: ILinkDevice, config: DeviceConfig): void {
-    this.devices.set(config.id, device);
-    console.log(`[MQTT] Registered device: ${config.name} (${config.id})`);
   }
 
   publishState(deviceId: string, state: LightState): void {

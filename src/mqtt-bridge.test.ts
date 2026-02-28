@@ -1,7 +1,6 @@
 import { vi } from 'vitest';
 import { MQTTBridge } from './mqtt-bridge';
-import { ILinkDevice } from './device';
-import { DeviceConfig, LightState } from './types';
+import { DeviceConfig, LightState, MQTTCommand } from './types';
 import mqtt from 'mqtt';
 
 // Mock mqtt module
@@ -30,38 +29,30 @@ vi.mock('mqtt', () => {
 
 describe('MQTTBridge', () => {
   let mqttBridge: MQTTBridge;
-  let mockDevice: ILinkDevice;
   let deviceConfig: DeviceConfig;
+  let commandHandler: (deviceId: string, command: MQTTCommand) => Promise<void>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset mock client
     mockMqttClient.on.mockClear();
     mockMqttClient.subscribe.mockClear();
     mockMqttClient.publish.mockClear();
     mockMqttClient.end.mockClear();
     mockMqttClient.connected = true;
-    
-    // Reset the mqtt mock to return our mock client
+
     const mqttMock = mqtt as any;
     mqttMock.mockReturnValue(mockMqttClient);
     (mqtt as any).connect = mqttMock;
-    
+
     deviceConfig = {
       id: 'test-device',
       name: 'Test Device',
       macAddress: 'aa:bb:cc:dd:ee:ff',
     };
 
-    mockDevice = {
-      sendCommand: vi.fn().mockResolvedValue(true),
-      getState: vi.fn().mockReturnValue({
-        power: false,
-        brightness: 100,
-      }),
-    } as any;
-
+    commandHandler = vi.fn().mockResolvedValue(undefined);
     mqttBridge = new MQTTBridge('mqtt://localhost:1883', undefined, 'ilink');
+    mqttBridge.setCommandHandler(commandHandler);
   });
 
   describe('Connection', () => {
@@ -154,22 +145,12 @@ describe('MQTTBridge', () => {
     });
   });
 
-  describe('Device registration', () => {
-    beforeEach(async () => {
-      mockMqttClient.on.mockImplementation((event: string, callback: Function) => {
-        if (event === 'connect') {
-          setTimeout(() => callback(), 0);
-        }
-      });
-      await mqttBridge.connect();
-    });
-
-    it('should register a device', () => {
-      mqttBridge.registerDevice(mockDevice, deviceConfig);
-
-      // Device should be registered (we can't directly check the internal map,
-      // but we can verify it's used when handling messages)
-      expect(mockDevice).toBeDefined();
+  describe('Command handler', () => {
+    it('should allow setting a command handler', () => {
+      const handler = vi.fn().mockResolvedValue(undefined);
+      const bridge = new MQTTBridge('mqtt://localhost:1883', undefined, 'ilink');
+      bridge.setCommandHandler(handler);
+      expect(handler).toBeDefined();
     });
   });
 
@@ -181,14 +162,12 @@ describe('MQTTBridge', () => {
         }
       });
       await mqttBridge.connect();
-      mqttBridge.registerDevice(mockDevice, deviceConfig);
     });
 
-    it('should handle ON command', () => {
+    it('should invoke command handler on ON command', () => {
       const topic = 'ilink/test-device/set';
       const payload = JSON.stringify({ state: 'ON' });
 
-      // Simulate message event
       const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
         (call) => call[0] === 'message'
       )?.[1];
@@ -197,10 +176,10 @@ describe('MQTTBridge', () => {
         messageHandler(topic, Buffer.from(payload));
       }
 
-      expect(mockDevice.sendCommand).toHaveBeenCalledWith({ state: 'ON' });
+      expect(commandHandler).toHaveBeenCalledWith('test-device', { state: 'ON' });
     });
 
-    it('should handle OFF command', () => {
+    it('should invoke command handler on OFF command', () => {
       const topic = 'ilink/test-device/set';
       const payload = JSON.stringify({ state: 'OFF' });
 
@@ -212,10 +191,10 @@ describe('MQTTBridge', () => {
         messageHandler(topic, Buffer.from(payload));
       }
 
-      expect(mockDevice.sendCommand).toHaveBeenCalledWith({ state: 'OFF' });
+      expect(commandHandler).toHaveBeenCalledWith('test-device', { state: 'OFF' });
     });
 
-    it('should handle brightness command', () => {
+    it('should invoke command handler on brightness command', () => {
       const topic = 'ilink/test-device/set';
       const payload = JSON.stringify({ brightness: 128 });
 
@@ -227,10 +206,10 @@ describe('MQTTBridge', () => {
         messageHandler(topic, Buffer.from(payload));
       }
 
-      expect(mockDevice.sendCommand).toHaveBeenCalledWith({ brightness: 128 });
+      expect(commandHandler).toHaveBeenCalledWith('test-device', { brightness: 128 });
     });
 
-    it('should handle color command', () => {
+    it('should invoke command handler on color command', () => {
       const topic = 'ilink/test-device/set';
       const payload = JSON.stringify({ color: { r: 255, g: 0, b: 0 } });
 
@@ -242,35 +221,12 @@ describe('MQTTBridge', () => {
         messageHandler(topic, Buffer.from(payload));
       }
 
-      expect(mockDevice.sendCommand).toHaveBeenCalledWith({
+      expect(commandHandler).toHaveBeenCalledWith('test-device', {
         color: { r: 255, g: 0, b: 0 },
       });
     });
 
-    it('should handle combined command', () => {
-      const topic = 'ilink/test-device/set';
-      const payload = JSON.stringify({
-        state: 'ON',
-        brightness: 200,
-        color: { r: 255, g: 128, b: 0 },
-      });
-
-      const messageHandler = (mockMqttClient.on.mock.calls as Array<[string, Function]>).find(
-        (call) => call[0] === 'message'
-      )?.[1];
-
-      if (messageHandler) {
-        messageHandler(topic, Buffer.from(payload));
-      }
-
-      expect(mockDevice.sendCommand).toHaveBeenCalledWith({
-        state: 'ON',
-        brightness: 200,
-        color: { r: 255, g: 128, b: 0 },
-      });
-    });
-
-    it('should ignore messages for unknown devices', () => {
+    it('should invoke command handler for any device id', () => {
       const topic = 'ilink/unknown-device/set';
       const payload = JSON.stringify({ state: 'ON' });
 
@@ -282,8 +238,7 @@ describe('MQTTBridge', () => {
         messageHandler(topic, Buffer.from(payload));
       }
 
-      // Should not call sendCommand for unknown device
-      expect(mockDevice.sendCommand).not.toHaveBeenCalled();
+      expect(commandHandler).toHaveBeenCalledWith('unknown-device', { state: 'ON' });
     });
 
     it('should ignore invalid topics', () => {
@@ -298,7 +253,7 @@ describe('MQTTBridge', () => {
         messageHandler(topic, Buffer.from(payload));
       }
 
-      expect(mockDevice.sendCommand).not.toHaveBeenCalled();
+      expect(commandHandler).not.toHaveBeenCalled();
     });
 
     it('should handle invalid JSON gracefully', () => {
@@ -310,7 +265,6 @@ describe('MQTTBridge', () => {
       )?.[1];
 
       if (messageHandler) {
-        // Should not throw
         expect(() => {
           messageHandler(topic, Buffer.from(payload));
         }).not.toThrow();
