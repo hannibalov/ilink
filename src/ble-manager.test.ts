@@ -108,6 +108,7 @@ describe('BLEManager', () => {
     });
 
     it('should reject if adapter is unauthorized', async () => {
+      (mockNoble as any)._state = 'unknown';
       mockNoble.on.mockImplementation((event: string, callback: Function) => {
         if (event === 'stateChange') setTimeout(() => callback('unauthorized'), 0);
       });
@@ -115,6 +116,7 @@ describe('BLEManager', () => {
     });
 
     it('should reject if adapter is unsupported', async () => {
+      (mockNoble as any)._state = 'unknown';
       mockNoble.on.mockImplementation((event: string, callback: Function) => {
         if (event === 'stateChange') setTimeout(() => callback('unsupported'), 0);
       });
@@ -172,17 +174,26 @@ describe('BLEManager', () => {
     });
 
     it('should scan and cache peripherals without connecting', async () => {
-      const found = await bleManager.scanForAllDevices([deviceConfig]);
+      vi.useFakeTimers();
+      const foundPromise = bleManager.scanForAllDevices([deviceConfig]);
+      await vi.advanceTimersByTimeAsync(11000);
+      const found = await foundPromise;
+      vi.useRealTimers();
 
       expect(found.size).toBe(1);
       expect(mockNoble.startScanning).toHaveBeenCalled();
       expect(mockDeviceInstance.connect).not.toHaveBeenCalled();
-    });
+    }, 15000);
 
     it('should find device by MAC address', async () => {
-      const found = await bleManager.scanForAllDevices([deviceConfig]);
+      vi.useFakeTimers();
+      const foundPromise = bleManager.scanForAllDevices([deviceConfig]);
+      await vi.advanceTimersByTimeAsync(11000);
+      const found = await foundPromise;
+      vi.useRealTimers();
+
       expect(found.has(deviceConfig.id)).toBe(true);
-    });
+    }, 15000);
   });
 
   describe('withDevice (short-lived connection)', () => {
@@ -192,13 +203,17 @@ describe('BLEManager', () => {
       await bleManager.initialize();
       (mockNoble as any)._triggerDiscover = true;
       (mockNoble as any)._mockPeripheral = mockPeripheral;
-      await bleManager.scanForAllDevices([
+      vi.useFakeTimers();
+      const scanPromise = bleManager.scanForAllDevices([
         {
           id: 'test-device',
           name: 'Test Device',
           macAddress: 'aa:bb:cc:dd:ee:ff',
         },
       ]);
+      await vi.advanceTimersByTimeAsync(11000);
+      await scanPromise;
+      vi.useRealTimers();
 
       deviceConfig = {
         id: 'test-device',
@@ -207,7 +222,7 @@ describe('BLEManager', () => {
         targetChar: 'a040',
         statusChar: 'a042',
       };
-    });
+    }, 15000);
 
     it('should connect, run fn, then disconnect', async () => {
       const result = await bleManager.withDevice(deviceConfig, async (device) => {
@@ -239,15 +254,17 @@ describe('BLEManager', () => {
       await bleManager.initialize();
       (mockNoble as any)._triggerDiscover = true;
       (mockNoble as any)._mockPeripheral = mockPeripheral;
-      await bleManager.scanForAllDevices([
+      vi.useFakeTimers();
+      const scanPromise = bleManager.scanForAllDevices([
         { id: 'test-device', name: 'Test Device', macAddress: 'aa:bb:cc:dd:ee:ff' },
       ]);
+      await vi.advanceTimersByTimeAsync(11000);
+      await scanPromise;
+      vi.useRealTimers();
 
       await bleManager.disconnectAll();
 
-      // Next withDevice for same config would need to find peripheral again (not in cache)
-      // We can't easily assert cache is empty; just ensure no throw
       await expect(bleManager.disconnectAll()).resolves.not.toThrow();
-    });
+    }, 15000);
   });
 });

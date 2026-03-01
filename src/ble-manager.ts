@@ -178,7 +178,7 @@ export class BLEManager {
   /**
    * Find a single device by config (scan and cache). Used when cache is empty.
    */
-  private async findAndCachePeripheral(config: DeviceConfig): Promise<Peripheral | null> {
+  private async findAndCachePeripheral(config: DeviceConfig): Promise<Peripheral | undefined> {
     if (this.isScanning) {
       await noble.stopScanningAsync();
       this.isScanning = false;
@@ -230,7 +230,7 @@ export class BLEManager {
     if (peripheral) {
       this.peripherals.set(config.id, peripheral);
     }
-    return peripheral ?? null;
+    return peripheral;
   }
 
   /** Clear peripheral cache. No persistent connections to close. */
