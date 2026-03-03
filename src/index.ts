@@ -72,10 +72,10 @@ async function main() {
     await bleManager.initialize();
     console.log('[Main] BLE manager initialized');
 
-    // Scan once to fill peripheral cache (no connections)
-    console.log('[Main] Scanning for configured devices (cache only, no connection)...');
+    // Scan once for visibility/logging (no connections; commands use fresh scan per request)
+    console.log('[Main] Scanning for configured devices (visibility only, no connection)...');
     const scanned = await bleManager.scanForAllDevices(config.devices);
-    console.log(`[Main] Cached ${scanned.size} of ${config.devices.length} device(s)`);
+    console.log(`[Main] Found ${scanned.size} of ${config.devices.length} device(s) in scan`);
 
     if (scanned.size === 0) {
       console.warn(
